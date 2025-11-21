@@ -2,87 +2,109 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 
 type User = {
   id: number
   name: string
   grade: string
-  ic_card_uid?: string // カードID
+  ic_card_uid?: string
 }
 
-export default function HomeClient({ users }: { users: User[] }) {
+// 履歴データの型定義
+type Transaction = {
+    id: number
+    created_at: string
+    user_name: string
+    product_name: string
+    total_amount: number
+    quantity: number
+}
+
+export default function HomeClient({ users, history }: { users: User[], history: Transaction[] }) {
   const router = useRouter()
   const grades = ['D3', 'D2', 'D1', 'M2', 'M1', 'B4', '研究生']
   const [scannedUser, setScannedUser] = useState<User | null>(null)
 
-  // カード監視エフェクト
+  // --- ランキング計算ロジック ---
+  const rankings = useMemo(() => {
+    // ユーザー別購入額集計
+    const userSpending: Record<string, number> = {}
+    history.forEach(t => {
+        const name = t.user_name || '不明'
+        userSpending[name] = (userSpending[name] || 0) + (t.total_amount || 0)
+    })
+    // 降順ソートしてTop3を抽出
+    const topUsers = Object.entries(userSpending)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+
+    // 人気商品集計
+    const productCount: Record<string, number> = {}
+    history.forEach(t => {
+        const name = t.product_name || '不明'
+        productCount[name] = (productCount[name] || 0) + (t.quantity || 0)
+    })
+    const topProducts = Object.entries(productCount)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+
+    return { topUsers, topProducts }
+  }, [history])
+
+
+  // --- ICカード監視エフェクト (既存) ---
   useEffect(() => {
     let intervalId: NodeJS.Timeout
-
     const checkCard = async () => {
       try {
-        // Pythonサーバーに問い合わせ
         const res = await fetch('http://localhost:5001/scan')
         const data = await res.json()
-
         if (data.status === 'found' && data.uid) {
-          // 読み取ったUIDを持つユーザーを探す
           const matchedUser = users.find(u => u.ic_card_uid === data.uid)
-          
           if (matchedUser) {
-            // ★発見！ログイン処理
             setScannedUser(matchedUser)
-            // 少し遅延させてジャンプ（演出のため）
-            setTimeout(() => {
-                router.push(`/shop/${matchedUser.id}`)
-            }, 500)
+            setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 500)
           }
         }
-      } catch (e) {
-        // Pythonサーバーが動いていない時は静かに無視
-      }
+      } catch (e) {}
     }
-
-    // 1秒ごとにチェック
     intervalId = setInterval(checkCard, 1000)
-
-    // 画面を離れる時に停止
     return () => clearInterval(intervalId)
   }, [users, router])
 
   return (
-    <div className="max-w-md mx-auto relative">
+    <div className="max-w-md mx-auto relative space-y-8">
       
-      {/* タッチ反応時のオーバーレイ演出 */}
+      {/* タッチ反応演出 */}
       {scannedUser && (
         <div className="fixed inset-0 bg-blue-600/90 z-50 flex flex-col items-center justify-center text-white animate-fade-in">
             <div className="text-6xl mb-4">🪪✨</div>
             <h2 className="text-3xl font-bold mb-2">Welcome!</h2>
             <p className="text-xl">{scannedUser.name} さん</p>
-            <p className="mt-4 text-sm opacity-80">ログイン中...</p>
         </div>
       )}
 
-      <h1 className="text-xl font-bold text-center mb-2 text-gray-800">
-        大島研 Food Store 🛒
-      </h1>
-      
-      {/* カードリーダーの状態表示 */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-center">
-        <p className="text-blue-800 font-bold animate-pulse">
-            📡 ICカードをタッチしてください
-        </p>
-        <p className="text-xs text-blue-500 mt-1">
-            または名前を選択して購入
-        </p>
+      {/* ヘッダーエリア */}
+      <div>
+        <h1 className="text-xl font-bold text-center mb-2 text-gray-800">
+            大島研 Food Store 🛒
+        </h1>
+        <div className="bg-white border border-blue-200 rounded-lg p-4 text-center shadow-sm">
+            <p className="text-blue-800 font-bold animate-pulse">
+                📡 ICカードをタッチしてください
+            </p>
+            <p className="text-xs text-blue-500 mt-1">
+                または名前を選択して購入
+            </p>
+        </div>
       </div>
 
+      {/* === ユーザー選択リスト (メイン機能) === */}
       <div className="space-y-6">
         {grades.map((grade) => {
           const gradeUsers = users.filter((u) => u.grade === grade)
           if (gradeUsers.length === 0) return null
-
           return (
             <div key={grade}>
               <h2 className="text-sm font-bold text-gray-400 border-b border-gray-300 mb-2 pb-1">
@@ -103,6 +125,79 @@ export default function HomeClient({ users }: { users: User[] }) {
           )
         })}
       </div>
+
+      {/* === 🔥 競争心を煽るランキングエリア === */}
+      <div className="pt-8 border-t border-gray-300">
+        <h2 className="text-center font-bold text-gray-800 mb-4 flex items-center justify-center gap-2">
+            👑 今月の長者番付 <span className="text-xs font-normal text-gray-500">(直近50件)</span>
+        </h2>
+        
+        <div className="grid grid-cols-2 gap-4 mb-8">
+            {/* ユーザーランキング */}
+            <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 shadow-sm">
+                <h3 className="text-xs font-bold text-yellow-800 text-center mb-3 uppercase tracking-wider">Top Spenders</h3>
+                <ul className="space-y-2">
+                    {rankings.topUsers.map(([name, amount], index) => (
+                        <li key={name} className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                                <span className={`font-bold ${index === 0 ? 'text-2xl' : index === 1 ? 'text-xl' : 'text-lg'}`}>
+                                    {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
+                                </span>
+                                <span className="font-bold text-gray-700 text-xs truncate max-w-[80px]">{name}</span>
+                            </div>
+                            <span className="font-bold text-gray-900">¥{amount.toLocaleString()}</span>
+                        </li>
+                    ))}
+                    {rankings.topUsers.length === 0 && <li className="text-xs text-gray-400 text-center">データなし</li>}
+                </ul>
+            </div>
+
+            {/* 商品ランキング */}
+            <div className="bg-red-50 p-4 rounded-xl border border-red-200 shadow-sm">
+                <h3 className="text-xs font-bold text-red-800 text-center mb-3 uppercase tracking-wider">Trending Items</h3>
+                <ul className="space-y-2">
+                    {rankings.topProducts.map(([name, count], index) => (
+                        <li key={name} className="flex items-center justify-between text-sm">
+                             <div className="flex items-center gap-2">
+                                <span className={`font-bold ${index === 0 ? 'text-red-600' : 'text-red-400'}`}>
+                                    {index + 1}.
+                                </span>
+                                <span className="font-medium text-gray-700 text-xs truncate max-w-[90px]">{name}</span>
+                            </div>
+                            <span className="font-bold text-gray-500 text-xs">x{count}</span>
+                        </li>
+                    ))}
+                    {rankings.topProducts.length === 0 && <li className="text-xs text-gray-400 text-center">データなし</li>}
+                </ul>
+            </div>
+        </div>
+
+        {/* === 🕒 直近の購入ログ === */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+            <h3 className="text-sm font-bold text-gray-600 mb-3">🕒 最近の購入履歴</h3>
+            <div className="space-y-3">
+                {history.slice(0, 5).map((t) => (
+                    <div key={t.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center text-xs font-bold text-gray-500">
+                                {t.user_name.slice(0, 1)}
+                            </div>
+                            <div>
+                                <p className="font-bold text-gray-800 text-xs">{t.user_name}</p>
+                                <p className="text-gray-500 text-[10px]">{new Date(t.created_at).toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'})}</p>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                            <p className="font-medium text-gray-700 text-xs">{t.product_name}</p>
+                            <p className="font-bold text-blue-600 text-xs">¥{t.total_amount}</p>
+                        </div>
+                    </div>
+                ))}
+                {history.length === 0 && <p className="text-center text-xs text-gray-400">まだ履歴がありません</p>}
+            </div>
+        </div>
+      </div>
+
     </div>
   )
 }

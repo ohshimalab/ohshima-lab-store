@@ -20,6 +20,8 @@ async function getData(userId: string) {
   const { data: products } = await supabase
     .from('products')
     .select('*')
+    .eq('is_active', true)
+    .order('category', { ascending: false })
     .order('id')
     
   // 3. ユーザー残高を取得
