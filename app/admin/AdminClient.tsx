@@ -10,7 +10,8 @@ type Product = {
   name: string
   price: number
   stock: number
-  is_active: boolean // ★追加
+  category: string
+  is_active: boolean
 }
 type UserBalance = {
     id: number
@@ -18,6 +19,7 @@ type UserBalance = {
     grade: string
     currentBalance: number
     ic_card_uid?: string
+    is_active?: boolean
 }
 type Transaction = {
     id: number
@@ -29,17 +31,35 @@ type Transaction = {
     quantity: number
     total_amount: number
 }
+type ProductLog = {
+    id: number
+    created_at: string
+    product_name: string
+    action_type: string
+    details: string
+}
+type ChargeLog = {
+    id: number
+    created_at: string
+    amount: number
+    user_name: string
+    user_grade: string
+}
 
 export default function AdminClient({ 
     initialProducts, 
     initialUsers,
     initialFund,
-    initialHistory
+    initialHistory,
+    initialProductLogs,
+    initialChargeLogs
 }: { 
     initialProducts: Product[], 
     initialUsers: UserBalance[],
     initialFund: number,
-    initialHistory: Transaction[]
+    initialHistory: Transaction[],
+    initialProductLogs: ProductLog[],
+    initialChargeLogs: ChargeLog[]
 }) {
   const router = useRouter()
   const [products, setProducts] = useState(initialProducts)
@@ -49,8 +69,9 @@ export default function AdminClient({
   const [loading, setLoading] = useState(false)
   const [chargeAmount, setChargeAmount] = useState(1000)
   
-  // 新規商品入力用State
   const [newProduct, setNewProduct] = useState({ name: '', price: 0, category: 'その他', stock: 0 })
+  const [newUser, setNewUser] = useState({ name: '', grade: 'B4' })
+  const [showAllUsers, setShowAllUsers] = useState(false)
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -76,101 +97,194 @@ export default function AdminClient({
   }, [initialHistory])
 
 
-  // --- 各種操作関数 ---
+  // --- チャージ (マイナス対応・入力改善) ---
+  const handleCharge = async (userToCharge: UserBalance) => {
+    if (chargeAmount === 0) return
 
-  // 商品追加
-  const handleAddProduct = async () => {
-    if (!newProduct.name || newProduct.price <= 0) {
-        alert('商品名と価格を正しく入力してください')
+    const isRefund = chargeAmount < 0
+    const confirmMsg = isRefund 
+        ? `⚠️【返金・訂正】\n${userToCharge.name}さんの残高を ${Math.abs(chargeAmount)} 円 減らしますか？\n(金庫からも減算されます)`
+        : `${userToCharge.name}さんに ${chargeAmount} 円をチャージしますか？\n(金庫も+${chargeAmount}円されます)`
+
+    if (!confirm(confirmMsg)) return
+    
+    setLoading(true)
+
+    const { data: balanceData, error: balanceError } = await supabase
+      .from('user_balances')
+      .upsert({ 
+        user_id: userToCharge.id, balance: userToCharge.currentBalance + chargeAmount 
+      }, { onConflict: 'user_id' })
+      .select().single()
+
+    if (balanceError) {
+        alert('残高更新エラー: ' + balanceError.message)
+        setLoading(false)
         return
     }
-    if(!confirm(`新商品「${newProduct.name}」を追加しますか？`)) return
 
-    setLoading(true)
-    const { data, error } = await supabase
-        .from('products')
-        .insert([{ ...newProduct, is_active: true }])
-        .select()
-        .single()
+    const newFundAmount = fund + chargeAmount
+    const { error: fundError } = await supabase
+        .from('lab_fund')
+        .update({ current_balance: newFundAmount })
+        .eq('id', 1)
 
-    if (error) alert('エラー: ' + error.message)
-    else {
-        alert('商品を追加しました！')
-        setProducts([...products, data]) // リストに追加
-        setNewProduct({ name: '', price: 0, category: 'その他', stock: 0 }) // フォームリセット
+    if (fundError) {
+        alert('金庫更新エラー')
+    } else {
+        await supabase.from('charge_logs').insert([{
+            user_id: userToCharge.id,
+            amount: chargeAmount
+        }])
+
+        fetch('/api/slack/charge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                userName: userToCharge.name, 
+                amount: chargeAmount,
+                currentFund: newFundAmount
+            })
+        })
+
+        setUsers(prev => prev.map(u => u.id === userToCharge.id ? { ...u, currentBalance: balanceData?.balance } : u))
+        setFund(newFundAmount)
+        alert(isRefund ? '返金(減額)処理を行いました。' : 'チャージしました！')
     }
+    
     setLoading(false)
     router.refresh()
   }
 
-  // 商品の廃盤/復帰 (論理削除)
-  const toggleProductStatus = async (product: Product) => {
-    const action = product.is_active ? '廃盤（非表示）' : '販売再開'
-    if (!confirm(`「${product.name}」を${action}にしますか？`)) return
-    
-    setLoading(true)
-    const { error } = await supabase
-        .from('products')
-        .update({ is_active: !product.is_active })
-        .eq('id', product.id)
 
-    if (error) alert('エラー: ' + error.message)
-    else {
+  // --- CSVダウンロード ---
+  const downloadCSV = () => {
+    if (initialHistory.length === 0) {
+        alert('履歴がないためダウンロードできません')
+        return
+    }
+    const headers = ['日時', '購入者', '学年', '商品名', 'カテゴリ', '個数', '金額']
+    const rows = initialHistory.map(t => [
+        `"${new Date(t.created_at).toLocaleString('ja-JP')}"`,
+        `"${t.user_name}"`,
+        `"${t.user_grade}"`,
+        `"${t.product_name}"`,
+        `"${t.product_category}"`,
+        t.quantity,
+        t.total_amount
+    ])
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF])
+    const blob = new Blob([bom, csvContent], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `売上履歴_${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  }
+
+  // --- 履歴リセット ---
+  const handleResetHistory = async () => {
+    if (!confirm('⚠️ 【重要】月次リセットを行いますか？\n\n・現在の取引履歴をCSVとしてダウンロードします。\n・その後、画面上の履歴をクリアします。\n・ユーザーの残高や在庫はそのまま残ります。')) return
+    setLoading(true)
+    downloadCSV()
+    if (!confirm('CSVのダウンロードは開始されましたか？\n「OK」を押すと、画面上の履歴をリセット(アーカイブ)します。\nこの操作は取り消せません。')) {
+        setLoading(false)
+        return
+    }
+    try {
+        const res = await fetch('/api/admin/archive', { method: 'POST' })
+        if (res.ok) {
+            alert('履歴をリセットしました！\n新しい月のスタートです。')
+            router.refresh()
+        } else {
+            alert('リセットに失敗しました。')
+        }
+    } catch (e) { alert('通信エラー') }
+    finally { setLoading(false) }
+  }
+
+
+  // --- 既存機能 ---
+  const handleAddUser = async () => {
+    if (!newUser.name) { alert('名前を入力してください'); return }
+    if (!confirm(`新メンバー「${newUser.name}」を追加しますか？`)) return
+    setLoading(true)
+    const { data: user, error } = await supabase.from('users').insert([{ name: newUser.name, grade: newUser.grade, is_active: true }]).select().single()
+    if (error) { alert('エラー'); setLoading(false); return }
+    await supabase.from('user_balances').insert([{ user_id: user.id, balance: 0 }])
+    alert('追加しました')
+    setUsers(prev => [...prev, { ...user, currentBalance: 0 }])
+    setNewUser({ name: '', grade: 'B4' })
+    setLoading(false)
+    router.refresh()
+  }
+  const toggleUserStatus = async (user: UserBalance) => {
+    if (!confirm(`ステータスを変更しますか？`)) return
+    setLoading(true)
+    const { error } = await supabase.from('users').update({ is_active: !user.is_active }).eq('id', user.id)
+    if (!error) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !user.is_active } : u))
+    setLoading(false)
+    router.refresh()
+  }
+  const handleAddProduct = async () => {
+    if (!newProduct.name) return
+    if(!confirm(`商品を追加しますか？`)) return
+    setLoading(true)
+    const { data, error } = await supabase.from('products').insert([{ ...newProduct, is_active: true }]).select().single()
+    if (!error) {
+        await logAction(data.name, '新規追加', `価格:${data.price}`)
+        setProducts([...products, data])
+        setNewProduct({ name: '', price: 0, category: 'その他', stock: 0 })
+    }
+    setLoading(false)
+    router.refresh()
+  }
+  const logAction = async (name: string, type: string, details: string) => {
+    await supabase.from('product_logs').insert([{ product_name: name, action_type: type, details: details }])
+  }
+  const toggleProductStatus = async (product: Product) => {
+    if (!confirm(`状態を変更しますか？`)) return
+    setLoading(true)
+    const { error } = await supabase.from('products').update({ is_active: !product.is_active }).eq('id', product.id)
+    if (!error) {
+        await logAction(product.name, product.is_active ? '廃盤' : '再販', '')
         setProducts(prev => prev.map(p => p.id === product.id ? { ...p, is_active: !product.is_active } : p))
     }
     setLoading(false)
     router.refresh()
   }
-
-  // 在庫更新
-  const updateStock = (id: number, newStock: number) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p))
+  const handleProductChange = (id: number, field: 'price' | 'stock', value: number) => {
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p))
   }
-  const saveStock = async (product: Product) => {
-    await supabase.from('products').update({ stock: product.stock }).eq('id', product.id)
-    alert('在庫更新しました')
-    router.refresh()
-  }
-
-  // チャージ
-  const handleCharge = async (userToCharge: UserBalance) => {
-    if (chargeAmount <= 0) return
-    if (!confirm(`${userToCharge.name}さんに ${chargeAmount} 円をチャージしますか？`)) return
+  const saveProduct = async (product: Product) => {
     setLoading(true)
-    const { data, error } = await supabase.from('user_balances').upsert({ 
-        user_id: userToCharge.id, balance: userToCharge.currentBalance + chargeAmount 
-      }, { onConflict: 'user_id' }).select().single()
-    
-    if (!error) {
-        await supabase.from('lab_fund').update({ current_balance: fund + chargeAmount }).eq('id', 1)
-        setUsers(prev => prev.map(u => u.id === userToCharge.id ? { ...u, currentBalance: data?.balance } : u))
-        setFund(prev => prev + chargeAmount)
-        alert('チャージしました')
-    }
+    await supabase.from('products').update({ stock: product.stock, price: product.price }).eq('id', product.id)
+    await logAction(product.name, '情報変更', '')
+    alert('更新しました')
     setLoading(false)
     router.refresh()
   }
-
-  // ICカード登録
   const handleRegisterCard = async (user: UserBalance) => {
-    if (!confirm('カードを登録します。リーダーにかざしてOKを押してください。')) return
+    if (!confirm('リーダーにかざしてOKを押してください。')) return
     try {
         const res = await fetch('http://localhost:5001/scan')
         const data = await res.json()
-        if (data.status === 'found' && data.uid) {
+        if (data.status === 'found') {
             await supabase.from('users').update({ ic_card_uid: data.uid }).eq('id', user.id)
             setUsers(prev => prev.map(u => u.id === user.id ? { ...u, ic_card_uid: data.uid } : u))
-            alert(`登録成功: ${data.uid}`)
+            alert('登録成功')
         } else alert('カードが見つかりませんでした')
     } catch { alert('Pythonサーバーエラー') }
   }
-
   const updateFundManually = async () => {
     if (!confirm(`金庫残高を ${fund} 円に修正しますか？`)) return
     await supabase.from('lab_fund').update({ current_balance: fund }).eq('id', 1)
     alert('修正しました')
     router.refresh()
   }
+  const displayedUsers = showAllUsers ? users : users.filter(u => u.is_active !== false)
 
   return (
     <div className="space-y-6">
@@ -178,10 +292,10 @@ export default function AdminClient({
       {/* タブ切り替え */}
       <div className="flex border-b border-gray-300 bg-white sticky top-0 z-20">
         <button onClick={() => setActiveTab('manage')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'manage' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
-            ⚙️ 在庫・チャージ管理
+            ⚙️ 在庫・商品・メンバー
         </button>
         <button onClick={() => setActiveTab('report')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'report' ? 'border-b-4 border-indigo-600 text-indigo-600' : 'text-gray-600 hover:text-gray-900'}`}>
-            📊 売上レポート
+            📊 売上・履歴・ログ
         </button>
       </div>
 
@@ -192,7 +306,13 @@ export default function AdminClient({
             <section className="bg-white p-6 rounded-xl shadow-sm border border-yellow-300">
                 <h2 className="text-lg font-bold text-gray-900 mb-4">💰 金庫（現金箱）</h2>
                 <div className="flex items-center gap-4">
-                    <input type="number" value={fund} onChange={(e) => setFund(Number(e.target.value))} className="text-3xl font-bold p-2 border border-gray-300 rounded w-40 text-right bg-white text-gray-900 shadow-inner" />
+                    <input 
+                        type="number" 
+                        value={fund} 
+                        onChange={(e) => setFund(Number(e.target.value))} // 数値としてセット
+                        onFocus={(e) => e.target.select()} // ★追加: フォーカス時に全選択
+                        className="text-3xl font-bold p-2 border border-gray-300 rounded w-40 text-right bg-white text-gray-900 shadow-inner" 
+                    />
                     <span className="text-xl font-bold text-gray-900">円</span>
                     <button onClick={updateFundManually} disabled={loading} className="bg-yellow-500 text-white px-4 py-2 rounded font-bold hover:bg-yellow-600 shadow-md">棚卸し修正</button>
                 </div>
@@ -200,29 +320,53 @@ export default function AdminClient({
 
             {/* ユーザー管理 */}
             <section className="bg-white p-6 rounded-xl shadow-sm border border-blue-200">
-                <h2 className="text-lg font-bold text-gray-900 mb-4">💳 ユーザー管理 (チャージ・カード)</h2>
-                <div className="flex items-center gap-4 mb-4 bg-blue-50 p-3 rounded border border-blue-100">
-                    <span className="font-bold text-sm text-gray-800">一括設定金額:</span>
-                    <input type="number" value={chargeAmount} onChange={(e) => setChargeAmount(Number(e.target.value))} className="font-bold p-2 border border-gray-300 rounded w-28 text-right bg-white text-gray-900" />
-                    <span className="font-bold text-sm text-gray-800">円</span>
+                <h2 className="text-lg font-bold text-gray-900 mb-4">💳 メンバー管理・チャージ</h2>
+                <div className="mb-6 bg-blue-50 p-4 rounded-lg border border-blue-100">
+                    <h3 className="text-sm font-bold text-blue-800 mb-3">👤 新メンバー追加</h3>
+                    <div className="flex gap-3 items-end">
+                        <div className="flex-1"><input type="text" placeholder="氏名" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-gray-900 bg-white" /></div>
+                        <div className="w-24">
+                            <select value={newUser.grade} onChange={e => setNewUser({...newUser, grade: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-gray-900 bg-white">
+                                {['B4', 'M1', 'M2', 'D1', 'D2', 'D3', '研究生', '教員', '秘書', 'OB'].map(g => <option key={g} value={g}>{g}</option>)}
+                            </select>
+                        </div>
+                        <button onClick={handleAddUser} disabled={loading} className="bg-blue-600 text-white font-bold p-2 rounded hover:bg-blue-700 shadow-md">追加</button>
+                    </div>
                 </div>
-                <div className="overflow-x-auto max-h-80 overflow-y-scroll border border-gray-300 rounded bg-white">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-gray-800">一括チャージ額:</span>
+                        <input 
+                            type="number" 
+                            value={chargeAmount} 
+                            onChange={(e) => setChargeAmount(Number(e.target.value))} 
+                            onFocus={(e) => e.target.select()} // ★追加: フォーカス時に全選択
+                            className={`font-bold p-1 border border-gray-300 rounded w-24 text-right ${chargeAmount < 0 ? 'bg-red-50 text-red-600' : 'bg-white text-gray-900'}`}
+                        />
+                        <span className="font-bold text-sm text-gray-800">円</span>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer"><input type="checkbox" checked={showAllUsers} onChange={e => setShowAllUsers(e.target.checked)} /> 卒業生も含めて表示</label>
+                </div>
+                <div className="overflow-x-auto max-h-96 overflow-y-scroll border border-gray-300 rounded bg-white">
                     <table className="min-w-full text-sm text-left">
                         <thead className="bg-gray-100 sticky top-0 z-10">
-                            <tr>
-                                <th className="p-3 font-bold text-gray-700 border-b">名前</th>
-                                <th className="p-3 font-bold text-gray-700 border-b">残高</th>
-                                <th className="p-3 font-bold text-gray-700 border-b">操作</th>
-                            </tr>
+                            <tr><th className="p-3 font-bold text-gray-700 border-b">名前</th><th className="p-3 font-bold text-gray-700 border-b">残高</th><th className="p-3 font-bold text-gray-700 border-b">操作</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                            {users.map(u => (
-                                <tr key={u.id} className="hover:bg-gray-50">
+                            {displayedUsers.map(u => (
+                                <tr key={u.id} className={`hover:bg-gray-50 ${u.is_active === false ? 'bg-gray-100 opacity-60' : ''}`}>
                                     <td className="p-3 font-bold text-gray-900">{u.name} <span className="text-xs font-normal text-gray-500">({u.grade})</span>{u.ic_card_uid && <span className="ml-1 text-xs text-green-600">✅</span>}</td>
                                     <td className="p-3 font-bold text-blue-700 text-lg">{u.currentBalance.toLocaleString()}</td>
-                                    <td className="p-3 flex gap-2">
-                                        <button onClick={() => handleCharge(u)} disabled={loading} className="bg-blue-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-blue-700 shadow">チャージ</button>
-                                        <button onClick={() => handleRegisterCard(u)} disabled={loading} className="bg-gray-700 text-white px-3 py-1 rounded text-xs font-bold hover:bg-gray-800 shadow">🆔 登録</button>
+                                    <td className="p-3 flex gap-2 items-center">
+                                        <button 
+                                            onClick={() => handleCharge(u)} 
+                                            disabled={loading || u.is_active === false} 
+                                            className={`text-white px-3 py-1 rounded text-xs font-bold shadow disabled:bg-gray-400 ${chargeAmount < 0 ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'}`}
+                                        >
+                                            {chargeAmount < 0 ? '返金' : 'チャージ'}
+                                        </button>
+                                        <button onClick={() => handleRegisterCard(u)} disabled={loading} className="bg-gray-700 text-white px-3 py-1 rounded text-xs font-bold hover:bg-gray-800 shadow">🆔</button>
+                                        <button onClick={() => toggleUserStatus(u)} disabled={loading} className={`ml-2 text-xs underline ${u.is_active === false ? 'text-blue-600' : 'text-red-400 hover:text-red-600'}`}>{u.is_active === false ? '復帰' : '卒業'}</button>
                                     </td>
                                 </tr>
                             ))}
@@ -231,69 +375,54 @@ export default function AdminClient({
                 </div>
             </section>
 
-            {/* 在庫管理（商品追加・廃盤機能付き） */}
+            {/* 在庫管理 */}
             <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-300">
-                <h2 className="text-lg font-bold text-gray-900 mb-4">📦 在庫管理・商品追加</h2>
-                
-                {/* 商品追加フォーム */}
+                <h2 className="text-lg font-bold text-gray-900 mb-4">📦 商品管理</h2>
                 <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                     <h3 className="text-sm font-bold text-gray-700 mb-3">✨ 新しい商品を追加</h3>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-                        <div className="col-span-2">
-                            <label className="text-xs font-bold text-gray-600 block mb-1">商品名</label>
-                            <input type="text" placeholder="例: 新発売ポテチ" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-gray-900" />
-                        </div>
+                        <div className="col-span-2"><input type="text" placeholder="商品名" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-gray-900" /></div>
+                        <div><input type="number" placeholder="価格" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-gray-900 text-right" /></div>
                         <div>
-                            <label className="text-xs font-bold text-gray-600 block mb-1">価格</label>
-                            <input type="number" placeholder="0" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: Number(e.target.value)})} className="w-full p-2 border border-gray-300 rounded text-gray-900 text-right" />
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-600 block mb-1">カテゴリ</label>
                             <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-gray-900">
                                 <option>ごはん</option><option>麺類</option><option>ドリンク</option><option>軽食</option><option>おかず</option><option>アイス</option><option>その他</option>
                             </select>
                         </div>
-                        <button onClick={handleAddProduct} disabled={loading} className="bg-green-600 text-white font-bold p-2 rounded hover:bg-green-700 shadow-md">追加する</button>
+                        <button onClick={handleAddProduct} disabled={loading} className="bg-green-600 text-white font-bold p-2 rounded hover:bg-green-700 shadow-md">追加</button>
                     </div>
                 </div>
-
-                {/* 商品リスト */}
-                <div className="overflow-x-auto max-h-[500px] overflow-y-scroll border border-gray-300 rounded bg-white">
+                <div className="overflow-x-auto max-h-[600px] overflow-y-scroll border border-gray-300 rounded bg-white">
                     <table className="min-w-full text-sm text-left">
                         <thead className="bg-gray-100 sticky top-0 z-10">
-                            <tr>
-                                <th className="p-3 font-bold text-gray-700 border-b">商品名</th>
-                                <th className="p-3 font-bold text-gray-700 border-b w-20">価格</th>
-                                <th className="p-3 font-bold text-gray-700 border-b">在庫数</th>
-                                <th className="p-3 font-bold text-gray-700 border-b text-center">状態</th>
-                                <th className="p-3 font-bold text-gray-700 border-b">操作</th>
-                            </tr>
+                            <tr><th className="p-3 font-bold text-gray-700 border-b">商品名</th><th className="p-3 font-bold text-gray-700 border-b">カテゴリ</th><th className="p-3 font-bold text-gray-700 border-b w-28">価格</th><th className="p-3 font-bold text-gray-700 border-b">在庫数</th><th className="p-3 font-bold text-gray-700 border-b">操作</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
                             {products.map(p => (
                                 <tr key={p.id} className={`hover:bg-gray-50 ${!p.is_active ? 'bg-gray-100 opacity-60' : ''}`}>
                                     <td className="p-3 font-bold text-gray-900">{p.name}</td>
-                                    <td className="p-3 text-gray-900">¥{p.price}</td>
+                                    <td className="p-3 text-gray-700"><span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded text-gray-600">{p.category}</span></td>
+                                    <td className="p-3"><div className="flex items-center"><span className="text-gray-500 mr-1">¥</span>
+                                        <input 
+                                            type="number" 
+                                            value={p.price} 
+                                            onChange={(e) => handleProductChange(p.id, 'price', Number(e.target.value))} 
+                                            onFocus={(e) => e.target.select()} // ★追加
+                                            className="w-20 p-1 border border-gray-300 rounded font-bold text-gray-900 text-right" 
+                                        />
+                                    </div></td>
                                     <td className="p-3 flex items-center gap-1">
-                                        <button onClick={() => updateStock(p.id, p.stock - 1)} className="bg-red-100 text-red-700 border border-red-200 w-7 h-7 rounded font-bold hover:bg-red-200">-</button>
-                                        <input type="number" value={p.stock} onChange={(e) => updateStock(p.id, Number(e.target.value))} className="w-14 text-center border border-gray-300 rounded p-1 font-bold text-gray-900 bg-white" />
-                                        <button onClick={() => updateStock(p.id, p.stock + 1)} className="bg-green-100 text-green-700 border border-green-200 w-7 h-7 rounded font-bold hover:bg-green-200">+</button>
-                                        <button onClick={() => saveStock(p)} className="ml-2 text-blue-600 text-xs font-bold underline hover:text-blue-800">保存</button>
+                                        <button onClick={() => handleProductChange(p.id, 'stock', p.stock - 1)} className="bg-red-100 text-red-700 border border-red-200 w-7 h-7 rounded font-bold hover:bg-red-200">-</button>
+                                        <input 
+                                            type="number" 
+                                            value={p.stock} 
+                                            onChange={(e) => handleProductChange(p.id, 'stock', Number(e.target.value))} 
+                                            onFocus={(e) => e.target.select()} // ★追加
+                                            className="w-14 text-center border border-gray-300 rounded p-1 font-bold text-gray-900 bg-white" 
+                                        />
+                                        <button onClick={() => handleProductChange(p.id, 'stock', p.stock + 1)} className="bg-green-100 text-green-700 border border-green-200 w-7 h-7 rounded font-bold hover:bg-green-200">+</button>
+                                        <button onClick={() => saveProduct(p)} className="ml-3 bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-200 text-xs font-bold hover:bg-blue-100">保存</button>
                                     </td>
-                                    <td className="p-3 text-center">
-                                        {p.is_active 
-                                            ? <span className="text-green-600 text-xs font-bold border border-green-200 bg-green-50 px-2 py-1 rounded-full">販売中</span> 
-                                            : <span className="text-gray-500 text-xs font-bold border border-gray-300 bg-gray-200 px-2 py-1 rounded-full">廃盤</span>
-                                        }
-                                    </td>
-                                    <td className="p-3 text-center">
-                                        <button 
-                                            onClick={() => toggleProductStatus(p)} 
-                                            className={`text-xs font-bold px-2 py-1 rounded border ${p.is_active ? 'text-red-600 border-red-200 hover:bg-red-50' : 'text-blue-600 border-blue-200 hover:bg-blue-50'}`}
-                                        >
-                                            {p.is_active ? '廃盤にする' : '再販する'}
-                                        </button>
-                                    </td>
+                                    <td className="p-3"><button onClick={() => toggleProductStatus(p)} className={`text-xs font-bold px-2 py-1 rounded border ${p.is_active ? 'text-red-600 border-red-200 hover:bg-red-50' : 'text-blue-600 border-blue-200 hover:bg-blue-50'}`}>{p.is_active ? '廃盤' : '再開'}</button></td>
                                 </tr>
                             ))}
                         </tbody>
@@ -303,13 +432,19 @@ export default function AdminClient({
         </div>
       )}
 
-      {/* === レポートタブ (文字色を濃く修正) === */}
+      {/* === レポートタブ (既存のまま) === */}
       {activeTab === 'report' && (
         <div className="space-y-8 animate-fade-in">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 人気商品ランキング */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-300 flex items-center justify-between">
+                <div>
+                    <h3 className="text-lg font-bold text-gray-800">🗓 月次締め・リセット</h3>
+                    <p className="text-sm text-gray-500">現在の取引履歴をCSV保存し、画面をリセットします。</p>
+                </div>
+                <button onClick={handleResetHistory} disabled={loading || initialHistory.length === 0} className="bg-red-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-red-700 disabled:bg-gray-400">CSV出力してリセット</button>
+            </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <section className="bg-white p-6 rounded-xl shadow-sm border border-indigo-200">
-                    <h3 className="text-md font-bold text-indigo-900 mb-4">🏆 人気商品ランキング (Top 5)</h3>
+                    <h3 className="text-md font-bold text-indigo-900 mb-4">🏆 人気商品ランキング</h3>
                     <ul className="space-y-3">
                         {stats.productRanking.map(([name, count], i) => (
                             <li key={name} className="flex items-center justify-between border-b border-indigo-50 pb-2">
@@ -319,10 +454,8 @@ export default function AdminClient({
                         ))}
                     </ul>
                 </section>
-
-                {/* ユーザー利用額ランキング */}
                 <section className="bg-white p-6 rounded-xl shadow-sm border border-green-200">
-                    <h3 className="text-md font-bold text-green-900 mb-4">👑 ヘビーユーザー (Top 5)</h3>
+                    <h3 className="text-md font-bold text-green-900 mb-4">👑 ヘビーユーザー</h3>
                     <ul className="space-y-3">
                         {stats.userRanking.map(([name, amount], i) => (
                             <li key={name} className="flex items-center justify-between border-b border-green-50 pb-2">
@@ -333,27 +466,56 @@ export default function AdminClient({
                     </ul>
                 </section>
             </div>
-
-            {/* 取引履歴リスト */}
+            <section className="bg-white p-6 rounded-xl shadow-sm border border-blue-300">
+                <h3 className="text-md font-bold text-blue-900 mb-4">💰 チャージ履歴 (直近50件)</h3>
+                <div className="overflow-x-auto max-h-60 overflow-y-scroll border border-blue-100 rounded">
+                    <table className="min-w-full text-sm text-left">
+                        <thead className="bg-blue-50 text-gray-700 sticky top-0">
+                            <tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">ユーザー</th><th className="p-3 border-b">チャージ額</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {initialChargeLogs.map((log) => (
+                                <tr key={log.id} className="hover:bg-blue-50/30">
+                                    <td className="p-3 text-gray-500 text-xs whitespace-nowrap">{new Date(log.created_at).toLocaleString('ja-JP')}</td>
+                                    <td className="p-3 font-bold text-gray-800">{log.user_name} <span className="text-xs font-normal text-gray-500">({log.user_grade})</span></td>
+                                    <td className="p-3 font-bold text-blue-600">{log.amount > 0 ? '+' : ''}{log.amount.toLocaleString()}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            <section className="bg-white p-6 rounded-xl shadow-sm border border-orange-200">
+                <h3 className="text-md font-bold text-orange-900 mb-4">🛠️ 商品管理ログ</h3>
+                <div className="overflow-x-auto max-h-60 overflow-y-scroll border border-orange-100 rounded">
+                    <table className="min-w-full text-sm text-left">
+                        <thead className="bg-orange-50 text-gray-700 sticky top-0">
+                            <tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">商品</th><th className="p-3 border-b">操作</th><th className="p-3 border-b">詳細</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {initialProductLogs.map((log) => (
+                                <tr key={log.id} className="hover:bg-orange-50/30">
+                                    <td className="p-3 text-gray-500 text-xs whitespace-nowrap">{new Date(log.created_at).toLocaleString('ja-JP')}</td>
+                                    <td className="p-3 font-bold text-gray-800">{log.product_name}</td>
+                                    <td className="p-3"><span className="text-xs font-bold px-2 py-1 rounded bg-gray-50 text-gray-600">{log.action_type}</span></td>
+                                    <td className="p-3 text-gray-600 text-xs">{log.details}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
             <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-300">
-                <h3 className="text-md font-bold text-gray-900 mb-4">📜 直近の取引履歴 (100件)</h3>
-                <div className="overflow-x-auto max-h-96 overflow-y-scroll border border-gray-300 rounded">
+                <h3 className="text-md font-bold text-gray-900 mb-4">📜 現在の取引履歴 (100件)</h3>
+                <div className="overflow-x-auto max-h-80 overflow-y-scroll border border-gray-300 rounded">
                     <table className="min-w-full text-sm text-left">
                         <thead className="bg-gray-100 text-gray-700 sticky top-0">
-                            <tr>
-                                <th className="p-3 border-b">日時</th>
-                                <th className="p-3 border-b">購入者</th>
-                                <th className="p-3 border-b">商品</th>
-                                <th className="p-3 border-b">個数</th>
-                                <th className="p-3 border-b">金額</th>
-                            </tr>
+                            <tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">購入者</th><th className="p-3 border-b">商品</th><th className="p-3 border-b">個数</th><th className="p-3 border-b">金額</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
                             {initialHistory.map((t) => (
                                 <tr key={t.id} className="hover:bg-gray-50">
-                                    <td className="p-3 text-gray-600 text-xs whitespace-nowrap">
-                                        {new Date(t.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                    </td>
+                                    <td className="p-3 text-gray-600 text-xs whitespace-nowrap">{new Date(t.created_at).toLocaleString('ja-JP')}</td>
                                     <td className="p-3 font-bold text-gray-900">{t.user_name}</td>
                                     <td className="p-3 text-gray-800">{t.product_name}</td>
                                     <td className="p-3 text-gray-800">x{t.quantity}</td>

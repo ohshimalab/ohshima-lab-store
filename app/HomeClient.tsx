@@ -2,6 +2,13 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useMemo } from 'react'
+import { createClient } from '@supabase/supabase-js'
+
+// クライアント用Supabase作成
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
 type User = {
   id: number
@@ -9,7 +16,6 @@ type User = {
   grade: string
   ic_card_uid?: string
 }
-
 type Transaction = {
     id: number
     created_at: string
@@ -24,7 +30,7 @@ export default function HomeClient({ users, history }: { users: User[], history:
   const grades = ['D3', 'D2', 'D1', 'M2', 'M1', 'B4', '研究生']
   const [scannedUser, setScannedUser] = useState<User | null>(null)
 
-  // --- ランキング計算 (既存のまま) ---
+  // --- ランキング計算 (既存) ---
   const rankings = useMemo(() => {
     const userSpending: Record<string, number> = {}
     history.forEach(t => {
@@ -39,32 +45,45 @@ export default function HomeClient({ users, history }: { users: User[], history:
         productCount[name] = (productCount[name] || 0) + (t.quantity || 0)
     })
     const topProducts = Object.entries(productCount).sort(([, a], [, b]) => b - a).slice(0, 3)
-
     return { topUsers, topProducts }
   }, [history])
 
 
   // --- ICカード監視エフェクト (既存のまま) ---
   useEffect(() => {
-    let intervalId: NodeJS.Timeout
-    const checkCard = async () => {
-      try {
-        const res = await fetch('http://localhost:5001/scan')
-        const data = await res.json()
-        if (data.status === 'found' && data.uid) {
-          const matchedUser = users.find(u => u.ic_card_uid === data.uid)
+    console.log("📡 Listening for card scans...")
+
+    // チャンネル登録
+    const channel = supabase
+      .channel('scans')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'realtime_scans' },
+        (payload) => {
+          const newScan = payload.new as { uid: string, scanned_at: string }
+          console.log("⚡️ Scan detected:", newScan.uid)
+
+          // 1. 自分のカードか探す
+          const matchedUser = users.find(u => u.ic_card_uid === newScan.uid)
+          
           if (matchedUser) {
-            setScannedUser(matchedUser)
-            // 0.5秒後に遷移
-            setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 500)
+            // 2. 時間チェック (念のため、10秒以内のスキャンのみ反応)
+            const scanTime = new Date(newScan.scanned_at).getTime()
+            const now = new Date().getTime()
+            
+            if (now - scanTime < 10000) {
+                setScannedUser(matchedUser)
+                // ログイン遷移
+                setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 800)
+            }
           }
         }
-      } catch (e) {
-        // サーバーが動いていない場合は無視
-      }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
     }
-    intervalId = setInterval(checkCard, 1000)
-    return () => clearInterval(intervalId)
   }, [users, router])
 
   return (

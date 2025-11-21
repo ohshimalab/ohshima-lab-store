@@ -4,31 +4,47 @@ import AdminClient from './AdminClient'
 export const dynamic = 'force-dynamic'
 
 async function getData() {
-    // 1. ユーザーと残高 (既存)
+    // 1. ユーザーと残高
     const { data: usersWithBalance } = await supabase
         .from('users')
         .select(`*, balance:user_balances(balance)`)
         .order('id')
 
-    // 2. 商品一覧 (既存)
+    // 2. 商品一覧
     const { data: products } = await supabase
         .from('products')
         .select('*')
         .order('id')
 
-    // 3. 金庫残高 (既存)
+    // 3. 金庫残高
     const { data: fundData } = await supabase
         .from('lab_fund')
         .select('current_balance')
         .single()
 
-    // 4. 取引履歴 (★NEW: 直近100件を取得)
+    // 4. 取引履歴 (★変更: is_archivedがfalseのものだけ取得)
     const { data: history } = await supabase
-        .from('transaction_details') // さっき作ったView
+        .from('transaction_details')
         .select('*')
-        .limit(100) // 多すぎると重いので制限
+        .eq('is_archived', false) // ★ここ重要
+        .limit(200) // CSV出力用に少し多めに取得
+        .order('created_at', { ascending: false })
 
-    // ユーザーデータの整形
+    // 5. 商品操作ログ
+    const { data: productLogs } = await supabase
+        .from('product_logs')
+        .select('*')
+        .limit(50)
+        .order('created_at', { ascending: false })
+
+    // 6. チャージ履歴
+    const { data: chargeLogs } = await supabase
+        .from('charge_logs')
+        .select(`id, created_at, amount, users ( name, grade )`)
+        .limit(50)
+        .order('created_at', { ascending: false })
+
+    // 整形処理
     const usersData = usersWithBalance?.map((u: any) => {
         let currentBalance = 0;
         if (Array.isArray(u.balance)) {
@@ -41,24 +57,35 @@ async function getData() {
             name: u.name,
             grade: u.grade,
             currentBalance: currentBalance,
-            ic_card_uid: u.ic_card_uid
+            ic_card_uid: u.ic_card_uid,
+            is_active: u.is_active
         };
     }) || []
+    
+    const formattedChargeLogs = chargeLogs?.map((log: any) => ({
+        id: log.id,
+        created_at: log.created_at,
+        amount: log.amount,
+        user_name: log.users?.name || '不明',
+        user_grade: log.users?.grade || ''
+    })) || []
     
     return { 
         usersData, 
         products,
         currentFund: fundData?.current_balance || 0,
-        history: history || [] // ★追加
+        history: history || [],
+        productLogs: productLogs || [],
+        chargeLogs: formattedChargeLogs
     }
 }
 
 export default async function AdminPage() {
-    const { usersData, products, currentFund, history } = await getData()
+    const { usersData, products, currentFund, history, productLogs, chargeLogs } = await getData()
 
     return (
         <main className="min-h-screen bg-gray-100 p-6 pb-20">
-            <div className="max-w-4xl mx-auto"> {/* 幅を少し広げました */}
+            <div className="max-w-4xl mx-auto">
                 <h1 className="text-2xl font-bold text-gray-800 mb-6">
                     🛠️ 管理者ダッシュボード
                 </h1>
@@ -66,7 +93,9 @@ export default async function AdminPage() {
                     initialProducts={products || []} 
                     initialUsers={usersData}
                     initialFund={currentFund}
-                    initialHistory={history} // ★追加
+                    initialHistory={history}
+                    initialProductLogs={productLogs}
+                    initialChargeLogs={chargeLogs}
                 />
             </div>
         </main>
