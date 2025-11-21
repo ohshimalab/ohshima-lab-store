@@ -14,135 +14,188 @@ type Product = {
   name: string
   price: number
   stock: number
+  category: string
 }
 
-// PropsにinitialBalanceを追加
 export default function ShopClient({ 
   user, 
   products,
-  initialBalance // ★NEW
+  initialBalance
 }: { 
   user: User, 
   products: Product[],
-  initialBalance: number // ★NEW
+  initialBalance: number
 }) {
   const router = useRouter()
   const [currentProducts, setCurrentProducts] = useState(products)
-  const [loadingProductId, setLoadingProductId] = useState<number | null>(null)
-  const [currentBalance, setCurrentBalance] = useState(initialBalance) // ★NEW: 残高State
+  const [currentBalance, setCurrentBalance] = useState(initialBalance)
+  const [loading, setLoading] = useState(false)
   
+  // カート状態: { 商品ID: 個数 } という形で管理
+  // 例: { 1: 2, 4: 1 } -> 商品ID1が2個、ID4が1個
+  const [cart, setCart] = useState<Record<number, number>>({})
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  const handlePurchase = async (product: Product) => {
-    // 残高チェックをフロントエンドでも行う（UI制御）
-    if (currentBalance < product.price) {
-        alert(`${user.name}さん、残高が足りません。現在の残高は ${currentBalance} 円です。`);
-        return; 
-    }
+  // カートに入れる（＋ボタン）
+  const increment = (product: Product) => {
+    const currentQty = cart[product.id] || 0
+    if (currentQty >= product.stock) return // 在庫以上は選べない
+    setCart({ ...cart, [product.id]: currentQty + 1 })
+  }
 
-    if (product.stock <= 0) {
-      alert(`${product.name}は在庫切れです。`);
-      return;
-    }
+  // カートから減らす（－ボタン）
+  const decrement = (productId: number) => {
+    const currentQty = cart[productId] || 0
+    if (currentQty <= 0) return
+    const newCart = { ...cart, [productId]: currentQty - 1 }
+    if (newCart[productId] <= 0) delete newCart[productId] // 0になったらキーごと消す
+    setCart(newCart)
+  }
 
-    if (!confirm(`${user.name}さん、${product.name}を ${product.price} 円で購入しますか？\n残高: ${currentBalance} 円 → ${currentBalance - product.price} 円`)) {
+  // 合計金額の計算
+  const totalAmount = Object.entries(cart).reduce((sum, [id, qty]) => {
+    const product = currentProducts.find(p => p.id === Number(id))
+    return sum + (product ? product.price * qty : 0)
+  }, 0)
+
+  // まとめて購入処理
+  const handleCheckout = async () => {
+    if (totalAmount === 0) return
+    if (loading) return
+
+    if (currentBalance < totalAmount) {
+        alert(`残高不足です。\n不足額: ${totalAmount - currentBalance} 円`)
         return
     }
 
-    setLoadingProductId(product.id)
+    if (!confirm(`合計 ${totalAmount} 円で決済しますか？\n(残高: ${currentBalance} → ${currentBalance - totalAmount} 円)`)) return
 
-    // RPC関数呼び出し
-    const { data: result, error } = await supabase.rpc('purchase_item', {
-      p_user_id: user.id,
-      p_product_id: product.id,
-    })
+    setLoading(true)
 
-    setLoadingProductId(null)
+    // APIに送るデータ形式に変換
+    // [{product_id: 1, quantity: 2}, ...]
+    const items = Object.entries(cart).map(([id, qty]) => ({
+        product_id: Number(id),
+        quantity: qty
+    }))
 
-    if (error) {
-        console.error('Purchase Error:', error)
-        if (error.message.includes('Insufficient balance')) {
-            alert(`購入失敗：残高が足りません。\n現在の残高: ${currentBalance} 円`);
+    try {
+        const { data, error } = await supabase.rpc('purchase_cart', {
+            p_user_id: user.id,
+            p_items: items
+        })
+
+        if (error) {
+            alert('エラー: ' + error.message)
+        } else if (data.success) {
+            alert('購入完了しました！')
+            setCart({}) // カートを空に
+            setCurrentBalance(data.new_balance) // 残高更新
+            router.refresh() // 在庫表示などを更新
         } else {
-            alert(`購入に失敗しました: ${error.message}`)
+            alert('購入失敗: ' + data.error)
         }
-    } else if (result && result.success) {
-      // 成功時の処理
-      alert(`${product.name} の購入が完了しました！\n残高: ${result.new_balance} 円`);
-      
-      // Stateの更新
-      setCurrentProducts(prev => 
-        prev.map(p => p.id === product.id ? { ...p, stock: result.new_stock } : p)
-      )
-      setCurrentBalance(result.new_balance) // ★NEW: 残高を更新
-
-    } else if (result && result.error) {
-        alert(`購入失敗: ${result.error}`)
-    } else {
-        alert('不明なエラーが発生しました。')
+    } catch (e) {
+        alert('通信エラーが発生しました')
+    } finally {
+        setLoading(false)
     }
   }
 
   return (
-    <div className="max-w-md mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">
-          🛒 {user.name} のお会計
-        </h1>
-        {/* 残高表示エリアを設置 */}
-        <div className="bg-blue-100 text-blue-800 p-2 rounded-lg font-bold">
-          残高: {currentBalance.toLocaleString()} 円
+    <div className="max-w-md mx-auto pb-24"> {/* 下部の固定バーのために余白確保 */}
+      <div className="flex justify-between items-center mb-4 sticky top-0 bg-gray-50 py-2 z-10">
+        <div>
+            <h1 className="text-xl font-bold text-gray-800">
+            🛒 {user.name}
+            </h1>
+            <p className="text-xs text-gray-500">商品を選んでください</p>
+        </div>
+        <div className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-lg font-bold shadow-sm">
+          残高: {currentBalance.toLocaleString()}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-3">
         {currentProducts.map((product) => {
-          const isAvailable = product.stock > 0;
-          const isLoading = loadingProductId === product.id;
-          const canAfford = currentBalance >= product.price; // 支払えるか
+          const quantity = cart[product.id] || 0
+          const isStockOut = product.stock <= 0
 
           return (
             <div
               key={product.id}
-              className={`p-4 rounded-lg shadow-md transition-all 
-                ${isAvailable ? (canAfford ? 'bg-white hover:shadow-lg' : 'bg-yellow-50 opacity-70') : 'bg-gray-200 opacity-60'}
-              `}
+              className={`flex justify-between items-center p-3 rounded-lg border bg-white shadow-sm
+                ${isStockOut ? 'opacity-60 bg-gray-100' : ''}`}
             >
-              <h2 className="text-lg font-bold mb-1 text-gray-800">
-                {product.name}
-              </h2>
-              <p className="text-2xl font-extrabold text-green-600 mb-2">
-                ¥{product.price.toLocaleString()}
-              </p>
-              <p className="text-sm text-gray-500 mb-3">
-                在庫: {product.stock}
-              </p>
-              <button
-                onClick={() => handlePurchase(product)}
-                disabled={!isAvailable || isLoading || !canAfford}
-                className={`w-full py-2 rounded-md font-semibold text-white transition-colors
-                  ${isAvailable && canAfford
-                    ? 'bg-blue-600 hover:bg-blue-700'
-                    : 'bg-gray-400 cursor-not-allowed'
-                  }
-                  ${isLoading ? 'animate-pulse' : ''}
-                `}
-              >
-                {isLoading ? '処理中...' : !isAvailable ? '在庫切れ' : !canAfford ? '残高不足' : '購入する'}
-              </button>
+              {/* 左側：商品情報 */}
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-bold bg-gray-100 text-gray-500 px-1.5 rounded">{product.category}</span>
+                    <h2 className="font-bold text-gray-800">{product.name}</h2>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                    <span className="font-bold text-blue-600">¥{product.price}</span>
+                    <span className={`text-xs ${product.stock < 3 ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
+                        (在庫: {product.stock})
+                    </span>
+                </div>
+              </div>
+
+              {/* 右側：カウンター */}
+              {isStockOut ? (
+                  <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-1 rounded border border-red-100">売り切れ</span>
+              ) : (
+                  <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-1 border border-gray-200">
+                    <button
+                        onClick={() => decrement(product.id)}
+                        disabled={quantity === 0}
+                        className="w-8 h-8 flex items-center justify-center bg-white rounded shadow-sm text-blue-600 font-bold disabled:opacity-30 disabled:shadow-none"
+                    >
+                        －
+                    </button>
+                    <span className="w-6 text-center font-bold text-lg text-gray-700">{quantity}</span>
+                    <button
+                        onClick={() => increment(product)}
+                        disabled={quantity >= product.stock}
+                        className="w-8 h-8 flex items-center justify-center bg-blue-600 rounded shadow-sm text-white font-bold disabled:bg-gray-300 disabled:shadow-none"
+                    >
+                        ＋
+                    </button>
+                  </div>
+              )}
             </div>
-          );
+          )
         })}
       </div>
 
+      {/* 下部固定：合計金額と決済ボタン */}
+      {totalAmount > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] p-4 animate-slide-up z-50">
+            <div className="max-w-md mx-auto flex justify-between items-center gap-4">
+                <div>
+                    <p className="text-xs text-gray-500 font-bold">お支払い合計</p>
+                    <p className="text-2xl font-extrabold text-blue-600">¥{totalAmount.toLocaleString()}</p>
+                </div>
+                <button
+                    onClick={handleCheckout}
+                    disabled={loading}
+                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:bg-blue-700 active:scale-95 transition transform flex justify-center items-center gap-2"
+                >
+                    {loading ? '処理中...' : '購入を確定する'}
+                </button>
+            </div>
+        </div>
+      )}
+
       <button
         onClick={() => router.push('/')}
-        className="mt-6 w-full py-3 bg-gray-300 text-gray-800 rounded-md font-semibold hover:bg-gray-400 transition-colors"
+        className="mt-8 w-full py-3 text-gray-400 text-sm hover:text-gray-600"
       >
-        他のメンバーを選ぶ
+        トップに戻る
       </button>
     </div>
   )
