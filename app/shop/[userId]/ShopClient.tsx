@@ -1,104 +1,149 @@
-'use client' // これが「ブラウザで動く部品」という宣言です
+'use client'
 
 import { createClient } from '@supabase/supabase-js'
-import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
-// 必要なデータの形を定義
+type User = {
+  id: number
+  name: string
+  grade: string
+}
 type Product = {
   id: number
   name: string
   price: number
   stock: number
-  category: string
 }
 
-type User = {
-  id: number
-  name: string
-}
-
-export default function ShopClient({ user, products }: { user: User, products: Product[] }) {
+// PropsにinitialBalanceを追加
+export default function ShopClient({ 
+  user, 
+  products,
+  initialBalance // ★NEW
+}: { 
+  user: User, 
+  products: Product[],
+  initialBalance: number // ★NEW
+}) {
   const router = useRouter()
-  const [loading, setLoading] = useState(false)
-
-  // Supabase接続（クライアント側用）
+  const [currentProducts, setCurrentProducts] = useState(products)
+  const [loadingProductId, setLoadingProductId] = useState<number | null>(null)
+  const [currentBalance, setCurrentBalance] = useState(initialBalance) // ★NEW: 残高State
+  
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  // 購入ボタンを押した時の処理
   const handlePurchase = async (product: Product) => {
-    if (product.stock <= 0) return
-    
-    const confirmMessage = `${product.name} (${product.price}円) を購入しますか？\n\n※お金箱に ${product.price}円 を入れてください。`
-    
-    if (!window.confirm(confirmMessage)) return
+    // 残高チェックをフロントエンドでも行う（UI制御）
+    if (currentBalance < product.price) {
+        alert(`${user.name}さん、残高が足りません。現在の残高は ${currentBalance} 円です。`);
+        return; 
+    }
 
-    setLoading(true)
+    if (product.stock <= 0) {
+      alert(`${product.name}は在庫切れです。`);
+      return;
+    }
 
-    try {
-      // 以前SQLで作った「purchase_item」関数を呼び出す
-      const { data, error } = await supabase.rpc('purchase_item', {
-        p_user_id: user.id,
-        p_product_id: product.id,
-        p_quantity: 1
-      })
+    if (!confirm(`${user.name}さん、${product.name}を ${product.price} 円で購入しますか？\n残高: ${currentBalance} 円 → ${currentBalance - product.price} 円`)) {
+        return
+    }
 
-      if (error) throw error
+    setLoadingProductId(product.id)
 
-      if (data.success) {
-        alert('購入しました！')
-        router.refresh() // 画面の在庫数を最新にする
-      } else {
-        alert('エラー: ' + data.message)
-      }
-    } catch (e) {
-      console.error(e)
-      alert('通信エラーが発生しました')
-    } finally {
-      setLoading(false)
+    // RPC関数呼び出し
+    const { data: result, error } = await supabase.rpc('purchase_item', {
+      p_user_id: user.id,
+      p_product_id: product.id,
+    })
+
+    setLoadingProductId(null)
+
+    if (error) {
+        console.error('Purchase Error:', error)
+        if (error.message.includes('Insufficient balance')) {
+            alert(`購入失敗：残高が足りません。\n現在の残高: ${currentBalance} 円`);
+        } else {
+            alert(`購入に失敗しました: ${error.message}`)
+        }
+    } else if (result && result.success) {
+      // 成功時の処理
+      alert(`${product.name} の購入が完了しました！\n残高: ${result.new_balance} 円`);
+      
+      // Stateの更新
+      setCurrentProducts(prev => 
+        prev.map(p => p.id === product.id ? { ...p, stock: result.new_stock } : p)
+      )
+      setCurrentBalance(result.new_balance) // ★NEW: 残高を更新
+
+    } else if (result && result.error) {
+        alert(`購入失敗: ${result.error}`)
+    } else {
+        alert('不明なエラーが発生しました。')
     }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold text-gray-800">
-          {user.name} さん
-        </h2>
-        <button onClick={() => router.push('/')} className="text-sm text-gray-500 underline">
-          戻る
-        </button>
+    <div className="max-w-md mx-auto">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">
+          🛒 {user.name} のお会計
+        </h1>
+        {/* 残高表示エリアを設置 */}
+        <div className="bg-blue-100 text-blue-800 p-2 rounded-lg font-bold">
+          残高: {currentBalance.toLocaleString()} 円
+        </div>
       </div>
-
-      {loading && <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 text-white font-bold">処理中...</div>}
 
       <div className="grid grid-cols-2 gap-4">
-        {products.map((product) => (
-          <button
-            key={product.id}
-            disabled={product.stock <= 0 || loading}
-            onClick={() => handlePurchase(product)}
-            className={`p-4 rounded-xl border-2 text-left transition relative shadow-sm
-              ${product.stock > 0 
-                ? 'bg-white border-transparent hover:border-blue-400 active:scale-95' 
-                : 'bg-gray-100 border-gray-200 opacity-60 cursor-not-allowed'}`}
-          >
-            <div className="flex justify-between items-start mb-2">
-              <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                {product.category}
-              </span>
-              <span className={`text-xs font-bold px-2 py-1 rounded-full ${product.stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
-                残 {product.stock}
-              </span>
+        {currentProducts.map((product) => {
+          const isAvailable = product.stock > 0;
+          const isLoading = loadingProductId === product.id;
+          const canAfford = currentBalance >= product.price; // 支払えるか
+
+          return (
+            <div
+              key={product.id}
+              className={`p-4 rounded-lg shadow-md transition-all 
+                ${isAvailable ? (canAfford ? 'bg-white hover:shadow-lg' : 'bg-yellow-50 opacity-70') : 'bg-gray-200 opacity-60'}
+              `}
+            >
+              <h2 className="text-lg font-bold mb-1 text-gray-800">
+                {product.name}
+              </h2>
+              <p className="text-2xl font-extrabold text-green-600 mb-2">
+                ¥{product.price.toLocaleString()}
+              </p>
+              <p className="text-sm text-gray-500 mb-3">
+                在庫: {product.stock}
+              </p>
+              <button
+                onClick={() => handlePurchase(product)}
+                disabled={!isAvailable || isLoading || !canAfford}
+                className={`w-full py-2 rounded-md font-semibold text-white transition-colors
+                  ${isAvailable && canAfford
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-400 cursor-not-allowed'
+                  }
+                  ${isLoading ? 'animate-pulse' : ''}
+                `}
+              >
+                {isLoading ? '処理中...' : !isAvailable ? '在庫切れ' : !canAfford ? '残高不足' : '購入する'}
+              </button>
             </div>
-            <h3 className="font-bold text-gray-800 text-lg mb-1">{product.name}</h3>
-            <p className="text-blue-600 font-bold text-xl">¥{product.price}</p>
-          </button>
-        ))}
+          );
+        })}
       </div>
+
+      <button
+        onClick={() => router.push('/')}
+        className="mt-6 w-full py-3 bg-gray-300 text-gray-800 rounded-md font-semibold hover:bg-gray-400 transition-colors"
+      >
+        他のメンバーを選ぶ
+      </button>
     </div>
   )
 }
