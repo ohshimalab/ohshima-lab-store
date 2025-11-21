@@ -31,6 +31,25 @@ async function getData(userId: string) {
     .eq('user_id', userId)
     .single()
 
+  const calculatedProducts = products?.map(p => {
+    // ingredientsがある場合、計算上の最大在庫数を算出
+    if (p.ingredients) {
+        const ingredients = p.ingredients as Record<string, number>;
+        let maxStock = 9999;
+        
+        // 各材料の在庫を確認して、ボトルネックを探す
+        Object.entries(ingredients).forEach(([ingId, reqQty]) => {
+            const ingredient = products.find(item => item.id === Number(ingId));
+            if (ingredient) {
+                const possibleQty = Math.floor(ingredient.stock / reqQty);
+                if (possibleQty < maxStock) maxStock = possibleQty;
+            }
+        });
+        return { ...p, stock: maxStock }; // 計算した在庫数で上書き
+      }
+      return p;
+  });
+
   return { 
     user, 
     products, 
