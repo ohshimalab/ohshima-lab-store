@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { verifyKioskPassword } from './actions'
 
@@ -10,7 +10,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// 型定義
 type User = {
   id: number
   name: string
@@ -25,7 +24,6 @@ type Transaction = {
     total_amount: number
     quantity: number
 }
-// ★追加: 商品の型
 type Product = {
     id: number
     name: string
@@ -34,16 +32,57 @@ type Product = {
     category: string
 }
 
-// Propsにproductsを追加
 export default function HomeClient({ users, history, products }: { users: User[], history: Transaction[], products: Product[] }) {
   const router = useRouter()
   const [scannedUser, setScannedUser] = useState<User | null>(null)
   const [isKioskMode, setIsKioskMode] = useState(false)
+  
+  // ★スクリーンセーバー用State
+  const [isScreensaverActive, setIsScreensaverActive] = useState(false)
 
   useEffect(() => {
     const savedMode = localStorage.getItem('kiosk_mode')
     if (savedMode === 'true') setIsKioskMode(true)
   }, [])
+
+  // --- ★スクリーンセーバー制御ロジック ---
+  const resetScreensaver = useCallback(() => {
+    setIsScreensaverActive(false)
+  }, [])
+
+  useEffect(() => {
+    // レジモード中のみ有効
+    if (!isKioskMode) return
+
+    let timeoutId: NodeJS.Timeout
+
+    const startTimer = () => {
+        clearTimeout(timeoutId)
+        // 3分(180000ms)操作がなければ黒画面へ
+        timeoutId = setTimeout(() => setIsScreensaverActive(true), 180000)
+    }
+
+    // 初回タイマー開始
+    startTimer()
+
+    // 何か操作（タッチやマウス移動）があったらタイマーリセット＆画面復帰
+    const handleActivity = () => {
+        if (isScreensaverActive) setIsScreensaverActive(false)
+        startTimer()
+    }
+
+    window.addEventListener('mousemove', handleActivity)
+    window.addEventListener('touchstart', handleActivity)
+    window.addEventListener('click', handleActivity)
+
+    return () => {
+        clearTimeout(timeoutId)
+        window.removeEventListener('mousemove', handleActivity)
+        window.removeEventListener('touchstart', handleActivity)
+        window.removeEventListener('click', handleActivity)
+    }
+  }, [isKioskMode, isScreensaverActive])
+
 
   const toggleKioskMode = async () => {
     const input = window.prompt(isKioskMode ? "レジモードを解除するパスワード:" : "レジモードを開始するパスワード:")
@@ -77,7 +116,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
     return { topUsers, topProducts }
   }, [history])
 
-  // ★メニューのカテゴリ分けロジック
   const menuByCategory = useMemo(() => {
     const grouped: Record<string, Product[]> = {}
     products.forEach(p => {
@@ -100,10 +138,13 @@ export default function HomeClient({ users, history, products }: { users: User[]
         (payload) => {
           const newScan = payload.new as { uid: string, scanned_at: string }
           const matchedUser = users.find(u => u.ic_card_uid === newScan.uid)
+          
           if (matchedUser) {
             const scanTime = new Date(newScan.scanned_at).getTime()
             const now = new Date().getTime()
             if (now - scanTime < 10000) {
+                // ★スキャンがあったらスクリーンセーバーを解除して遷移
+                setIsScreensaverActive(false) 
                 setScannedUser(matchedUser)
                 setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 800)
             }
@@ -117,6 +158,19 @@ export default function HomeClient({ users, history, products }: { users: User[]
   return (
     <div className="max-w-md mx-auto relative space-y-8 pb-20">
       
+      {/* ★スクリーンセーバー（黒画面） */}
+      {isScreensaverActive && isKioskMode && (
+        <div 
+            className="fixed inset-0 bg-black z-[9999] cursor-none flex items-center justify-center"
+            onClick={() => setIsScreensaverActive(false)} // タップで復帰
+        >
+            {/* 完全に真っ黒だと動いているか不安になるので、極薄くロゴなどを出す */}
+            <div className="text-gray-900 font-bold text-xl opacity-20 animate-pulse">
+                Touch to Wake
+            </div>
+        </div>
+      )}
+
       <div className="absolute top-0 right-0">
         <button onClick={toggleKioskMode} className={`text-[10px] px-2 py-1 rounded border font-bold ${isKioskMode ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-200 text-gray-500 border-gray-300'}`}>
             {isKioskMode ? '📱 レジモード中' : '管理者用'}
@@ -132,6 +186,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
         </div>
       )}
 
+      {/* ...以下、既存の表示コード... */}
       <div>
         <h1 className="text-xl font-bold text-center mb-2 text-gray-800">大島研 Food Store 🛒</h1>
         {isKioskMode ? (
@@ -179,36 +234,20 @@ export default function HomeClient({ users, history, products }: { users: User[]
             </div>
       </div>
 
-      {/* === ★NEW: 現在のメニュー表 === */}
       <div className="space-y-4">
-        <h2 className="text-center font-bold text-gray-800 flex items-center justify-center gap-2">
-            📦 現在の販売メニュー
-        </h2>
-        
+        <h2 className="text-center font-bold text-gray-800 flex items-center justify-center gap-2">📦 現在の販売メニュー</h2>
         {Object.entries(menuByCategory).map(([category, items]) => (
             <div key={category} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="bg-gray-100 px-4 py-2 border-b border-gray-200 font-bold text-gray-600 text-sm">
-                    {category}
-                </div>
+                <div className="bg-gray-100 px-4 py-2 border-b border-gray-200 font-bold text-gray-600 text-sm">{category}</div>
                 <div className="divide-y divide-gray-100">
                     {items.map(product => (
                         <div key={product.id} className="flex justify-between items-center p-3">
                             <div>
-                                <p className={`font-bold text-sm ${product.stock > 0 ? 'text-gray-800' : 'text-gray-400 line-through'}`}>
-                                    {product.name}
-                                </p>
+                                <p className={`font-bold text-sm ${product.stock > 0 ? 'text-gray-800' : 'text-gray-400 line-through'}`}>{product.name}</p>
                                 <p className="text-xs text-blue-600 font-bold">¥{product.price}</p>
                             </div>
                             <div>
-                                {product.stock > 0 ? (
-                                    <span className={`text-xs px-2 py-1 rounded-full font-bold ${product.stock <= 3 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
-                                        残 {product.stock}
-                                    </span>
-                                ) : (
-                                    <span className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full font-bold">
-                                        売切
-                                    </span>
-                                )}
+                                {product.stock > 0 ? (<span className={`text-xs px-2 py-1 rounded-full font-bold ${product.stock <= 3 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>残 {product.stock}</span>) : (<span className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full font-bold">売切</span>)}
                             </div>
                         </div>
                     ))}
@@ -217,7 +256,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
         ))}
       </div>
 
-      {/* 直近のログ (既存) */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
             <h3 className="text-sm font-bold text-gray-600 mb-3">🕒 最近の購入履歴</h3>
             <div className="space-y-3">
