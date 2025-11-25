@@ -43,10 +43,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
     if (savedMode === 'true') setIsKioskMode(true)
   }, [])
 
-  const resetScreensaver = useCallback(() => {
-    setIsScreensaverActive(false)
-  }, [])
-
+  // --- スクリーンセーバー制御 ---
   useEffect(() => {
     if (!isKioskMode) return
     let timeoutId: NodeJS.Timeout
@@ -84,6 +81,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
     }
   }
 
+  // ランキング計算
   const rankings = useMemo(() => {
     const userSpending: Record<string, number> = {}
     history.forEach(t => {
@@ -139,9 +137,23 @@ export default function HomeClient({ users, history, products }: { users: User[]
   return (
     <div className="max-w-md mx-auto relative space-y-8 pb-20">
       
+      {/* ★スクリーンセーバー（デザイン修正版） */}
       {isScreensaverActive && isKioskMode && (
-        <div className="fixed inset-0 bg-black z-[9999] cursor-none flex items-center justify-center" onClick={() => setIsScreensaverActive(false)}>
-            <div className="text-gray-900 font-bold text-xl opacity-20 animate-pulse">Touch to Wake</div>
+        <div 
+            className="fixed inset-0 bg-black z-[9999] cursor-none flex flex-col items-center justify-center overflow-hidden"
+            onClick={() => setIsScreensaverActive(false)}
+        >
+            {/* 動く文字 */}
+            <div className="text-white font-bold text-4xl tracking-widest opacity-80 animate-bounce duration-[3000ms]">
+                OHSHIMA LAB STORE
+            </div>
+            <div className="mt-4 text-blue-500 text-sm animate-pulse">
+                Touch ID Card to Login
+            </div>
+            
+            {/* 装飾用の浮遊する円（雰囲気を出すため） */}
+            <div className="absolute top-1/4 left-1/4 w-32 h-32 bg-blue-900 rounded-full mix-blend-screen filter blur-3xl opacity-20 animate-pulse"></div>
+            <div className="absolute bottom-1/4 right-1/4 w-40 h-40 bg-indigo-900 rounded-full mix-blend-screen filter blur-3xl opacity-20 animate-pulse delay-1000"></div>
         </div>
       )}
 
@@ -163,7 +175,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
       <div>
         <h1 className="text-xl font-bold text-center mb-2 text-gray-800">大島研 Food Store 🛒</h1>
         {isKioskMode ? (
-            /* ★修正箇所: bg-blue-600 を追加して、グラデーションが効かない場合の保険にする */
             <div className="bg-blue-600 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-6 text-center shadow-lg animate-pulse">
                 <p className="text-4xl mb-2">📡</p>
                 <p className="text-lg font-bold">リーダーにタッチしてください</p>
