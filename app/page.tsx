@@ -4,34 +4,43 @@ import HomeClient from './HomeClient'
 export const dynamic = 'force-dynamic'
 
 async function getData() {
-  // 1. ユーザー一覧を取得
+  // 1. ユーザー一覧
   const { data: users } = await supabase
     .from('users')
     .select('*')
     .eq('is_active', true)
     .order('id')
 
-  // 2. 取引履歴を取得 (★NEW: 直近50件)
-  // ランキング計算と履歴表示に使います
+  // 2. 取引履歴
   const { data: history } = await supabase
     .from('transaction_details')
     .select('*')
     .limit(50)
     .order('created_at', { ascending: false })
 
+  // 3. 商品一覧 (★NEW: これを追加)
+  // 販売中(is_active=true)のものだけを取得
+  const { data: products } = await supabase
+    .from('products')
+    .select('*')
+    .eq('is_active', true)
+    .order('category') // カテゴリ順に並べる
+    .order('id')
+
   return {
     users: users || [],
-    history: history || []
+    history: history || [],
+    products: products || [] // ★渡す
   }
 }
 
 export default async function Home() {
-  const { users, history } = await getData()
+  const { users, history, products } = await getData()
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 pb-20">
-      {/* 履歴データも渡す */}
-      <HomeClient users={users} history={history} />
+      {/* productsも渡す */}
+      <HomeClient users={users} history={history} products={products} />
     </main>
   )
 }
