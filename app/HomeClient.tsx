@@ -38,7 +38,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
   const [isKioskMode, setIsKioskMode] = useState(false)
   const [isScreensaverActive, setIsScreensaverActive] = useState(false)
   
-  // スクリーンセーバー用: テキストの位置と現在時刻
+  // スクリーンセーバー用
   const [saverPos, setSaverPos] = useState({ top: '50%', left: '50%' })
   const [timeStr, setTimeStr] = useState('')
 
@@ -55,23 +55,21 @@ export default function HomeClient({ users, history, products }: { users: User[]
     let intervalId: NodeJS.Timeout
     let clockId: NodeJS.Timeout
 
-    // 3分操作なしで起動
     const startTimer = () => {
         clearTimeout(timeoutId)
         timeoutId = setTimeout(() => {
             setIsScreensaverActive(true)
-            moveSaver() // 起動時に位置更新
-        }, 180000) 
+            moveSaver()
+        }, 180000) // 3分
     }
 
-    // 起動中の定期移動（10秒ごと）
     const moveSaver = () => {
-        const top = Math.floor(Math.random() * 80) + 10 + '%' // 10%~90%の範囲
-        const left = Math.floor(Math.random() * 80) + 10 + '%'
+        // 画面中央付近でランダムに動くように調整（巨大背景の中での相対位置）
+        const top = Math.floor(Math.random() * 40) + 30 + '%' 
+        const left = Math.floor(Math.random() * 40) + 30 + '%'
         setSaverPos({ top, left })
     }
 
-    // 時計更新
     const updateClock = () => {
         const now = new Date()
         setTimeStr(now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }))
@@ -79,9 +77,8 @@ export default function HomeClient({ users, history, products }: { users: User[]
 
     startTimer()
     
-    // スクリーンセーバーが有効な間だけループ処理
     if (isScreensaverActive) {
-        intervalId = setInterval(moveSaver, 10000) // 10秒ごとに移動（焼き付き防止）
+        intervalId = setInterval(moveSaver, 10000)
         clockId = setInterval(updateClock, 1000)
         updateClock()
     }
@@ -174,41 +171,35 @@ export default function HomeClient({ users, history, products }: { users: User[]
   return (
     <div className="max-w-md mx-auto relative space-y-8 pb-20">
       
-      {/* ★幾何学・画面焼け防止スクリーンセーバー */}
+      {/* ★修正版スクリーンセーバー: 画面の2倍サイズで覆う */}
       {isScreensaverActive && isKioskMode && (
         <div 
-            className="fixed inset-0 bg-black z-[10000] cursor-none overflow-hidden"
+            className="fixed top-[-50%] left-[-50%] w-[200vw] h-[200vh] bg-black z-[10000] cursor-none overflow-hidden touch-none flex items-center justify-center"
             onClick={() => setIsScreensaverActive(false)}
         >
-            {/* 背景の幾何学模様 (ゆっくり回転・移動) */}
-            {/* 四角形 */}
-            <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-900 opacity-30 animate-[spin_10s_linear_infinite]"></div>
-            <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-800 opacity-20 animate-[spin_15s_linear_infinite_reverse] rotate-45"></div>
-            
-            {/* 円形 */}
-            <div className="absolute bottom-1/4 right-1/4 w-80 h-80 border border-blue-900 rounded-full opacity-20 animate-pulse"></div>
-            <div className="absolute bottom-1/3 right-1/3 w-40 h-40 border border-indigo-900 rounded-full opacity-30 animate-bounce"></div>
-
-            {/* 移動するメインコンテンツ (位置がランダムに変わる) */}
-            <div 
-                className="absolute flex flex-col items-center transition-all duration-[2000ms] ease-in-out"
-                style={{ top: saverPos.top, left: saverPos.left, transform: 'translate(-50%, -50%)' }}
-            >
-                {/* 時計 */}
-                <div className="text-6xl font-mono font-bold text-gray-800 tracking-widest opacity-50 select-none">
-                    {timeStr}
-                </div>
+            {/* コンテンツコンテナ（画面中央に配置するための枠） */}
+            <div className="relative w-[50vw] h-[50vh]">
                 
-                {/* 店舗名 */}
-                <div className="mt-2 text-xl font-bold text-blue-900 tracking-[0.5em] opacity-60 select-none whitespace-nowrap">
-                    OHSHIMA LAB STORE
-                </div>
-
-                {/* インジケータ */}
-                <div className="mt-4 flex gap-2">
-                    <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping"></div>
-                    <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping delay-100"></div>
-                    <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping delay-200"></div>
+                {/* 背景の幾何学模様 */}
+                <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-900 opacity-30 animate-[spin_10s_linear_infinite]"></div>
+                <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-800 opacity-20 animate-[spin_15s_linear_infinite_reverse] rotate-45"></div>
+                <div className="absolute bottom-1/4 right-1/4 w-80 h-80 border border-blue-900 rounded-full opacity-20 animate-pulse"></div>
+                
+                {/* 移動する文字 */}
+                <div 
+                    className="absolute flex flex-col items-center transition-all duration-[2000ms] ease-in-out"
+                    style={{ top: saverPos.top, left: saverPos.left, transform: 'translate(-50%, -50%)' }}
+                >
+                    <div className="text-6xl font-mono font-bold text-gray-800 tracking-widest opacity-50 select-none">
+                        {timeStr}
+                    </div>
+                    <div className="mt-2 text-xl font-bold text-blue-900 tracking-[0.5em] opacity-60 select-none whitespace-nowrap">
+                        OHSHIMA LAB STORE
+                    </div>
+                    <div className="mt-4 flex gap-2">
+                        <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping"></div>
+                        <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping delay-100"></div>
+                    </div>
                 </div>
             </div>
         </div>
