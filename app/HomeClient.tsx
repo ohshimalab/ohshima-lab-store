@@ -36,8 +36,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
   const router = useRouter()
   const [scannedUser, setScannedUser] = useState<User | null>(null)
   const [isKioskMode, setIsKioskMode] = useState(false)
-  
-  // ★スクリーンセーバー用State
   const [isScreensaverActive, setIsScreensaverActive] = useState(false)
 
   useEffect(() => {
@@ -45,36 +43,25 @@ export default function HomeClient({ users, history, products }: { users: User[]
     if (savedMode === 'true') setIsKioskMode(true)
   }, [])
 
-  // --- ★スクリーンセーバー制御ロジック ---
   const resetScreensaver = useCallback(() => {
     setIsScreensaverActive(false)
   }, [])
 
   useEffect(() => {
-    // レジモード中のみ有効
     if (!isKioskMode) return
-
     let timeoutId: NodeJS.Timeout
-
     const startTimer = () => {
         clearTimeout(timeoutId)
-        // 3分(180000ms)操作がなければ黒画面へ
-        timeoutId = setTimeout(() => setIsScreensaverActive(true), 180000)
+        timeoutId = setTimeout(() => setIsScreensaverActive(true), 180000) // 3分
     }
-
-    // 初回タイマー開始
     startTimer()
-
-    // 何か操作（タッチやマウス移動）があったらタイマーリセット＆画面復帰
     const handleActivity = () => {
         if (isScreensaverActive) setIsScreensaverActive(false)
         startTimer()
     }
-
     window.addEventListener('mousemove', handleActivity)
     window.addEventListener('touchstart', handleActivity)
     window.addEventListener('click', handleActivity)
-
     return () => {
         clearTimeout(timeoutId)
         window.removeEventListener('mousemove', handleActivity)
@@ -82,7 +69,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
         window.removeEventListener('click', handleActivity)
     }
   }, [isKioskMode, isScreensaverActive])
-
 
   const toggleKioskMode = async () => {
     const input = window.prompt(isKioskMode ? "レジモードを解除するパスワード:" : "レジモードを開始するパスワード:")
@@ -98,7 +84,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
     }
   }
 
-  // ランキング計算
   const rankings = useMemo(() => {
     const userSpending: Record<string, number> = {}
     history.forEach(t => {
@@ -125,8 +110,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
     return grouped
   }, [products])
 
-
-  // Supabase Realtime 監視
   useEffect(() => {
     if (!isKioskMode) return
     console.log("📡 [Kiosk Active] Listening for card scans...")
@@ -138,12 +121,10 @@ export default function HomeClient({ users, history, products }: { users: User[]
         (payload) => {
           const newScan = payload.new as { uid: string, scanned_at: string }
           const matchedUser = users.find(u => u.ic_card_uid === newScan.uid)
-          
           if (matchedUser) {
             const scanTime = new Date(newScan.scanned_at).getTime()
             const now = new Date().getTime()
             if (now - scanTime < 10000) {
-                // ★スキャンがあったらスクリーンセーバーを解除して遷移
                 setIsScreensaverActive(false) 
                 setScannedUser(matchedUser)
                 setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 800)
@@ -158,16 +139,9 @@ export default function HomeClient({ users, history, products }: { users: User[]
   return (
     <div className="max-w-md mx-auto relative space-y-8 pb-20">
       
-      {/* ★スクリーンセーバー（黒画面） */}
       {isScreensaverActive && isKioskMode && (
-        <div 
-            className="fixed inset-0 bg-black z-[9999] cursor-none flex items-center justify-center"
-            onClick={() => setIsScreensaverActive(false)} // タップで復帰
-        >
-            {/* 完全に真っ黒だと動いているか不安になるので、極薄くロゴなどを出す */}
-            <div className="text-gray-900 font-bold text-xl opacity-20 animate-pulse">
-                Touch to Wake
-            </div>
+        <div className="fixed inset-0 bg-black z-[9999] cursor-none flex items-center justify-center" onClick={() => setIsScreensaverActive(false)}>
+            <div className="text-gray-900 font-bold text-xl opacity-20 animate-pulse">Touch to Wake</div>
         </div>
       )}
 
@@ -186,11 +160,11 @@ export default function HomeClient({ users, history, products }: { users: User[]
         </div>
       )}
 
-      {/* ...以下、既存の表示コード... */}
       <div>
         <h1 className="text-xl font-bold text-center mb-2 text-gray-800">大島研 Food Store 🛒</h1>
         {isKioskMode ? (
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-6 text-center shadow-lg animate-pulse-slow">
+            /* ★修正箇所: bg-blue-600 を追加して、グラデーションが効かない場合の保険にする */
+            <div className="bg-blue-600 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl p-6 text-center shadow-lg animate-pulse">
                 <p className="text-4xl mb-2">📡</p>
                 <p className="text-lg font-bold">リーダーにタッチしてください</p>
                 <p className="text-xs text-blue-100 mt-2">iPad専用レジモード稼働中</p>
