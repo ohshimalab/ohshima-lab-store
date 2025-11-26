@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import ShopClient from './ShopClient'
+import PresenceGuard from './PresenceGuard'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,8 @@ export default async function ShopPage({ params }: Props) {
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 pb-20">
+      <PresenceGuard currentUserId={userId} />
+
       <ShopClient 
         user={user} 
         products={products || []} 

@@ -146,20 +146,20 @@ export default function HomeClient({ users, history, products }: { users: User[]
     if (!isKioskMode) return
     console.log("📡 [Kiosk Active] Listening for card scans...")
     const channel = supabase
-      .channel('scans')
+      .channel('kiosk_entry')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'realtime_scans' },
+        { event: 'UPDATE', schema: 'public', table: 'kiosk_status', filter: 'id=eq.1' },
         (payload) => {
-          const newScan = payload.new as { uid: string, scanned_at: string }
-          const matchedUser = users.find(u => u.ic_card_uid === newScan.uid)
-          if (matchedUser) {
-            const scanTime = new Date(newScan.scanned_at).getTime()
-            const now = new Date().getTime()
-            if (now - scanTime < 10000) {
-                setIsScreensaverActive(false) 
+          const newUid = payload.new.current_uid
+          
+          // カードが置かれた時だけ反応
+          if (newUid) {
+            const matchedUser = users.find(u => u.ic_card_uid === newUid)
+            if (matchedUser) {
                 setScannedUser(matchedUser)
-                setTimeout(() => { router.push(`/shop/${matchedUser.id}`) }, 800)
+                // 即座に遷移
+                router.push(`/shop/${matchedUser.id}`)
             }
           }
         }
