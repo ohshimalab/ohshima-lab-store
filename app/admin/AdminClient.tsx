@@ -166,8 +166,8 @@ export default function AdminClient({
     if (chargeAmount === 0) return
     const isRefund = chargeAmount < 0
     const confirmMsg = isRefund 
-        ? `⚠️【返金・訂正】\n${userToCharge.name}さんの残高を ${Math.abs(chargeAmount)} 円 減らしますか？`
-        : `${userToCharge.name}さんに ${chargeAmount} 円をチャージしますか？`
+        ? `⚠️【返金・訂正】\n${userToCharge.name}さんの残高を ${Math.abs(chargeAmount)} $SHM 減らしますか？`
+        : `${userToCharge.name}さんに ${chargeAmount} $SHMをチャージしますか？`
 
     if (!confirm(confirmMsg)) return
     setLoading(true)
@@ -302,7 +302,7 @@ export default function AdminClient({
     router.refresh()
   }
   const updateFundManually = async () => {
-    if (!confirm(`金庫残高を ${fund} 円に修正しますか？`)) return
+    if (!confirm(`金庫残高を ${fund} $SHMに修正しますか？`)) return
     await supabase.from('lab_fund').update({ current_balance: fund }).eq('id', 1)
     alert('修正しました')
     router.refresh()
@@ -340,7 +340,7 @@ export default function AdminClient({
                 <h2 className="text-lg font-bold text-gray-900 mb-4">💰 金庫（現金箱）</h2>
                 <div className="flex items-center gap-4">
                     <input type="number" value={fund} onChange={(e) => setFund(Number(e.target.value))} onFocus={(e) => e.target.select()} className="text-3xl font-bold p-2 border border-gray-300 rounded w-40 text-right bg-white text-gray-900 shadow-inner" />
-                    <span className="text-xl font-bold text-gray-900">円</span>
+                    <span className="text-xl font-bold text-gray-900"> $SHM</span>
                     <button onClick={updateFundManually} disabled={loading} className="bg-yellow-500 text-white px-4 py-2 rounded font-bold hover:bg-yellow-600 shadow-md">棚卸し修正</button>
                 </div>
             </section>
@@ -363,7 +363,7 @@ export default function AdminClient({
                     <div className="flex items-center gap-2">
                         <span className="font-bold text-sm text-gray-800">一括チャージ額:</span>
                         <input type="number" value={chargeAmount} onChange={(e) => setChargeAmount(Number(e.target.value))} onFocus={(e) => e.target.select()} className={`font-bold p-1 border border-gray-300 rounded w-24 text-right ${chargeAmount < 0 ? 'bg-red-50 text-red-600' : 'bg-white text-gray-900'}`} />
-                        <span className="font-bold text-sm text-gray-800">円</span>
+                        <span className="font-bold text-sm text-gray-800"> $SHM</span>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer"><input type="checkbox" checked={showAllUsers} onChange={e => setShowAllUsers(e.target.checked)} /> 卒業生も含めて表示</label>
                 </div>
@@ -419,7 +419,7 @@ export default function AdminClient({
                                 <tr key={p.id} className={`hover:bg-gray-50 ${!p.is_active ? 'bg-gray-100 opacity-60' : ''}`}>
                                     <td className="p-3 font-bold text-gray-900">{p.name}</td>
                                     <td className="p-3 text-gray-700"><span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded text-gray-600">{p.category}</span></td>
-                                    <td className="p-3"><div className="flex items-center"><span className="text-gray-500 mr-1">¥</span><input type="number" value={p.price} onChange={(e) => handleProductChange(p.id, 'price', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-20 p-1 border border-gray-300 rounded font-bold text-gray-900 text-right" /></div></td>
+                                    <td className="p-3"><div className="flex items-center"><input type="number" value={p.price} onChange={(e) => handleProductChange(p.id, 'price', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-20 p-1 border border-gray-300 rounded font-bold text-gray-900 text-right" /><span className="text-gray-500 mr-1"> $SHM</span></div></td>
                                     <td className="p-3 flex items-center gap-1">
                                         <button onClick={() => handleProductChange(p.id, 'stock', p.stock - 1)} className="bg-red-100 text-red-700 border border-red-200 w-7 h-7 rounded font-bold hover:bg-red-200">-</button>
                                         <input type="number" value={p.stock} onChange={(e) => handleProductChange(p.id, 'stock', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-14 text-center border border-gray-300 rounded p-1 font-bold text-gray-900 bg-white" />
@@ -457,7 +457,7 @@ export default function AdminClient({
                     <h3 className="text-md font-bold text-green-900 mb-4">👑 ヘビーユーザー</h3>
                     <ul className="space-y-3">
                         {stats.userRanking.map(([name, amount], i) => (
-                            <li key={name} className="flex items-center justify-between border-b border-green-50 pb-2"><span className="font-bold text-gray-800"><span className="text-green-600 mr-2 font-extrabold">#{i+1}</span> {name}</span><span className="font-bold text-gray-900">¥{amount.toLocaleString()}</span></li>
+                            <li key={name} className="flex items-center justify-between border-b border-green-50 pb-2"><span className="font-bold text-gray-800"><span className="text-green-600 mr-2 font-extrabold">#{i+1}</span> {name}</span><span className="font-bold text-gray-900">{amount.toLocaleString()} $SHM</span></li>
                         ))}
                     </ul>
                 </section>
@@ -495,7 +495,7 @@ export default function AdminClient({
                         <thead className="bg-gray-100 text-gray-700 sticky top-0"><tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">購入者</th><th className="p-3 border-b">商品</th><th className="p-3 border-b">個数</th><th className="p-3 border-b">金額</th></tr></thead>
                         <tbody className="divide-y divide-gray-200">
                             {initialHistory.map((t) => (
-                                <tr key={t.id} className="hover:bg-gray-50"><td className="p-3 text-gray-600 text-xs">{new Date(t.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-900">{t.user_name}</td><td className="p-3 text-gray-800">{t.product_name}</td><td className="p-3 text-gray-800">x{t.quantity}</td><td className="p-3 font-bold text-gray-900">¥{t.total_amount}</td></tr>
+                                <tr key={t.id} className="hover:bg-gray-50"><td className="p-3 text-gray-600 text-xs">{new Date(t.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-900">{t.user_name}</td><td className="p-3 text-gray-800">{t.product_name}</td><td className="p-3 text-gray-800">x{t.quantity}</td><td className="p-3 font-bold text-gray-900">{t.total_amount} $SHM</td></tr>
                             ))}
                         </tbody>
                     </table>

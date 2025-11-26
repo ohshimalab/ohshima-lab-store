@@ -194,7 +194,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
                         {timeStr}
                     </div>
                     <div className="mt-2 text-xl font-bold text-blue-900 tracking-[0.5em] opacity-60 select-none whitespace-nowrap">
-                        OHSHIMA LAB STORE
+                        OHSHM LAB STORE
                     </div>
                     <div className="mt-4 flex gap-2">
                         <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping"></div>
@@ -246,7 +246,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
                                 <span className={`font-bold ${index === 0 ? 'text-2xl' : index === 1 ? 'text-xl' : 'text-lg'}`}>{index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}</span>
                                 <span className="font-bold text-gray-700 text-xs truncate max-w-[80px]">{name}</span>
                             </div>
-                            <span className="font-bold text-gray-900">¥{amount.toLocaleString()}</span>
+                            <span className="font-bold text-gray-900">{amount.toLocaleString()} $SHM</span>
                         </li>
                     ))}
                 </ul>
@@ -277,7 +277,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
                         <div key={product.id} className="flex justify-between items-center p-3">
                             <div>
                                 <p className={`font-bold text-sm ${product.stock > 0 ? 'text-gray-800' : 'text-gray-400 line-through'}`}>{product.name}</p>
-                                <p className="text-xs text-blue-600 font-bold">¥{product.price}</p>
+                                <p className="text-xs text-blue-600 font-bold">{product.price} $SHM</p>
                             </div>
                             <div>
                                 {product.stock > 0 ? (<span className={`text-xs px-2 py-1 rounded-full font-bold ${product.stock <= 3 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>残 {product.stock}</span>) : (<span className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full font-bold">売切</span>)}
@@ -303,7 +303,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
                         </div>
                         <div className="text-right">
                             <p className="font-medium text-gray-700 text-xs">{t.product_name}</p>
-                            <p className="font-bold text-blue-600 text-xs">¥{t.total_amount}</p>
+                            <p className="font-bold text-blue-600 text-xs">{t.total_amount} $SHM</p>
                         </div>
                     </div>
                 ))}

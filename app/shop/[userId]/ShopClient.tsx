@@ -69,7 +69,7 @@ export default function ShopClient({
 
     // ... (残高チェックなどはそのまま) ...
     
-    if (!confirm(`合計 ${totalAmount} 円で決済しますか？`)) return
+    if (!confirm(`合計 ${totalAmount} $SHMで決済しますか？`)) return
 
     setLoading(true)
 
@@ -157,7 +157,7 @@ export default function ShopClient({
                     <h2 className="font-bold text-gray-800">{product.name}</h2>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
-                    <span className="font-bold text-blue-600">¥{product.price}</span>
+                    <span className="font-bold text-blue-600">{product.price} $SHM</span>
                     <span className={`text-xs ${product.stock < 3 ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
                         (在庫: {product.stock})
                     </span>
@@ -197,7 +197,7 @@ export default function ShopClient({
             <div className="max-w-md mx-auto flex justify-between items-center gap-4">
                 <div>
                     <p className="text-xs text-gray-500 font-bold">お支払い合計</p>
-                    <p className="text-2xl font-extrabold text-blue-600">¥{totalAmount.toLocaleString()}</p>
+                    <p className="text-2xl font-extrabold text-blue-600">{totalAmount.toLocaleString()} $SHM</p>
                 </div>
                 <button
                     onClick={handleCheckout}
