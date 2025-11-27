@@ -73,7 +73,6 @@ export default function AdminClient({
   const [newUser, setNewUser] = useState({ name: '', grade: 'B4' })
   const [showAllUsers, setShowAllUsers] = useState(false)
 
-  // ★追加: カード登録中のユーザーを保持するState
   const [registeringUser, setRegisteringUser] = useState<UserBalance | null>(null)
 
   const supabase = createClient(
@@ -81,29 +80,27 @@ export default function AdminClient({
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  // --- ★カード登録用 Realtime 監視 ---
+  // --- ★修正: カード登録用 Realtime 監視 (kiosk_status対応版) ---
   useEffect(() => {
-    // 登録モードじゃない時は何もしない
     if (!registeringUser) return
 
     console.log(`📡 Waiting for card scan for user: ${registeringUser.name}...`)
 
     const channel = supabase
-      .channel('admin_scans')
+      .channel('admin_card_register')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'realtime_scans' },
+        // ★ここを変更: realtime_scans(INSERT) ではなく kiosk_status(UPDATE) を監視
+        { event: 'UPDATE', schema: 'public', table: 'kiosk_status', filter: 'id=eq.1' },
         async (payload) => {
-          const newScan = payload.new as { uid: string, scanned_at: string }
-          console.log("⚡️ Scan detected:", newScan.uid)
-
-          // 古いデータ(10秒以上前)は無視
-          const scanTime = new Date(newScan.scanned_at).getTime()
-          const now = new Date().getTime()
-          if (now - scanTime > 10000) return
-
-          // 登録実行
-          await executeRegisterCard(registeringUser, newScan.uid)
+          const newUid = payload.new.current_uid
+          
+          // カードが置かれた時(UIDがある時)だけ反応
+          if (newUid) {
+              console.log("⚡️ Card detected:", newUid)
+              // 登録実行
+              await executeRegisterCard(registeringUser, newUid)
+          }
         }
       )
       .subscribe()
@@ -111,11 +108,11 @@ export default function AdminClient({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [registeringUser]) // registeringUserが変わるたびに再設定
+  }, [registeringUser]) 
 
   // 実際の登録処理
   const executeRegisterCard = async (user: UserBalance, uid: string) => {
-    // 重複チェック (既に他の人に登録されているか)
+    // 重複チェック
     const isDuplicate = users.some(u => u.ic_card_uid === uid && u.id !== user.id)
     if (isDuplicate) {
         alert('エラー: このカードは既に他のメンバーに登録されています。')
@@ -133,11 +130,10 @@ export default function AdminClient({
         alert('登録エラー: ' + error.message)
     } else {
         alert(`✅ ${user.name}さんのカードを登録しました！\nUID: ${uid}`)
-        // 画面更新
         setUsers(prev => prev.map(u => u.id === user.id ? { ...u, ic_card_uid: uid } : u))
     }
     setLoading(false)
-    setRegisteringUser(null) // 登録モード終了
+    setRegisteringUser(null)
     router.refresh()
   }
 
@@ -161,15 +157,17 @@ export default function AdminClient({
   }, [initialHistory])
 
 
-  // --- チャージ ---
+  // --- チャージ (マイナス対応・入力改善) ---
   const handleCharge = async (userToCharge: UserBalance) => {
     if (chargeAmount === 0) return
+
     const isRefund = chargeAmount < 0
     const confirmMsg = isRefund 
-        ? `⚠️【返金・訂正】\n${userToCharge.name}さんの残高を ${Math.abs(chargeAmount)} $SHM 減らしますか？`
-        : `${userToCharge.name}さんに ${chargeAmount} $SHMをチャージしますか？`
+        ? `⚠️【返金・訂正】\n${userToCharge.name}さんの残高を ${Math.abs(chargeAmount)} $OSH 減らしますか？\n(金庫からも減算されます)`
+        : `${userToCharge.name}さんに ${chargeAmount} $OSH をチャージしますか？\n(金庫も+${chargeAmount} $OSH されます)`
 
     if (!confirm(confirmMsg)) return
+    
     setLoading(true)
 
     const { data: balanceData, error: balanceError } = await supabase
@@ -191,31 +189,52 @@ export default function AdminClient({
         .update({ current_balance: newFundAmount })
         .eq('id', 1)
 
-    if (!fundError) {
-        await supabase.from('charge_logs').insert([{ user_id: userToCharge.id, amount: chargeAmount }])
+    if (fundError) {
+        alert('金庫更新エラー')
+    } else {
+        await supabase.from('charge_logs').insert([{
+            user_id: userToCharge.id,
+            amount: chargeAmount
+        }])
+
         fetch('/api/slack/charge', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userName: userToCharge.name, amount: chargeAmount, currentFund: newFundAmount })
+            body: JSON.stringify({ 
+                userName: userToCharge.name, 
+                amount: chargeAmount,
+                currentFund: newFundAmount
+            })
         })
+
         setUsers(prev => prev.map(u => u.id === userToCharge.id ? { ...u, currentBalance: balanceData?.balance } : u))
         setFund(newFundAmount)
-        alert(isRefund ? '返金処理を行いました。' : 'チャージしました！')
+        alert(isRefund ? '返金(減額)処理を行いました。' : 'チャージしました！')
     }
+    
     setLoading(false)
     router.refresh()
   }
 
-  // --- カード登録ボタン (★ここを変更: モード切替のみ) ---
   const handleRegisterCardButton = (user: UserBalance) => {
-    setRegisteringUser(user) // 登録モード開始（モーダル表示）
+    setRegisteringUser(user)
   }
 
-  // --- CSVダウンロード ---
   const downloadCSV = () => {
-    if (initialHistory.length === 0) { alert('履歴がありません'); return }
+    if (initialHistory.length === 0) {
+        alert('履歴がないためダウンロードできません')
+        return
+    }
     const headers = ['日時', '購入者', '学年', '商品名', 'カテゴリ', '個数', '金額']
-    const rows = initialHistory.map(t => [`"${new Date(t.created_at).toLocaleString('ja-JP')}"`, `"${t.user_name}"`, `"${t.user_grade}"`, `"${t.product_name}"`, `"${t.product_category}"`, t.quantity, t.total_amount])
+    const rows = initialHistory.map(t => [
+        `"${new Date(t.created_at).toLocaleString('ja-JP')}"`,
+        `"${t.user_name}"`,
+        `"${t.user_grade}"`,
+        `"${t.product_name}"`,
+        `"${t.product_category}"`,
+        t.quantity,
+        t.total_amount
+    ])
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     const bom = new Uint8Array([0xEF, 0xBB, 0xBF])
     const blob = new Blob([bom, csvContent], { type: 'text/csv' })
@@ -228,30 +247,35 @@ export default function AdminClient({
   }
 
   const handleResetHistory = async () => {
-    if (!confirm('⚠️ 【重要】月次リセットを行いますか？\nCSVダウンロード後に画面の履歴をクリアします。')) return
+    if (!confirm('⚠️ 【重要】月次リセットを行いますか？\n\n・現在の取引履歴をCSVとしてダウンロードします。\n・その後、画面上の履歴をクリアします。\n・ユーザーの残高や在庫はそのまま残ります。')) return
     setLoading(true)
     downloadCSV()
-    if (!confirm('CSVはダウンロードされましたか？\nOKを押すと履歴をアーカイブします。')) { setLoading(false); return }
+    if (!confirm('CSVのダウンロードは開始されましたか？\n「OK」を押すと、画面上の履歴をリセット(アーカイブ)します。\nこの操作は取り消せません。')) {
+        setLoading(false)
+        return
+    }
     try {
         const res = await fetch('/api/admin/archive', { method: 'POST' })
-        if (res.ok) { alert('リセット完了'); router.refresh() }
-        else alert('失敗')
-    } catch { alert('通信エラー') }
+        if (res.ok) {
+            alert('履歴をリセットしました！\n新しい月のスタートです。')
+            router.refresh()
+        } else {
+            alert('リセットに失敗しました。')
+        }
+    } catch (e) { alert('通信エラー') }
     finally { setLoading(false) }
   }
 
-  // --- 既存機能 ---
   const handleAddUser = async () => {
-    if (!newUser.name) return
-    if (!confirm(`「${newUser.name}」を追加しますか？`)) return
+    if (!newUser.name) { alert('名前を入力してください'); return }
+    if (!confirm(`新メンバー「${newUser.name}」を追加しますか？`)) return
     setLoading(true)
     const { data: user, error } = await supabase.from('users').insert([{ name: newUser.name, grade: newUser.grade, is_active: true }]).select().single()
-    if (!error) {
-        await supabase.from('user_balances').insert([{ user_id: user.id, balance: 0 }])
-        alert('追加しました')
-        setUsers(prev => [...prev, { ...user, currentBalance: 0 }])
-        setNewUser({ name: '', grade: 'B4' })
-    }
+    if (error) { alert('エラー'); setLoading(false); return }
+    await supabase.from('user_balances').insert([{ user_id: user.id, balance: 0 }])
+    alert('追加しました')
+    setUsers(prev => [...prev, { ...user, currentBalance: 0 }])
+    setNewUser({ name: '', grade: 'B4' })
     setLoading(false)
     router.refresh()
   }
@@ -262,9 +286,6 @@ export default function AdminClient({
     if (!error) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !user.is_active } : u))
     setLoading(false)
     router.refresh()
-  }
-  const logAction = async (name: string, type: string, details: string) => {
-    await supabase.from('product_logs').insert([{ product_name: name, action_type: type, details: details }])
   }
   const handleAddProduct = async () => {
     if (!newProduct.name) return
@@ -278,6 +299,9 @@ export default function AdminClient({
     }
     setLoading(false)
     router.refresh()
+  }
+  const logAction = async (name: string, type: string, details: string) => {
+    await supabase.from('product_logs').insert([{ product_name: name, action_type: type, details: details }])
   }
   const toggleProductStatus = async (product: Product) => {
     if (!confirm(`状態を変更しますか？`)) return
@@ -302,7 +326,7 @@ export default function AdminClient({
     router.refresh()
   }
   const updateFundManually = async () => {
-    if (!confirm(`金庫残高を ${fund} $SHMに修正しますか？`)) return
+    if (!confirm(`金庫残高を ${fund} $OSH に修正しますか？`)) return
     await supabase.from('lab_fund').update({ current_balance: fund }).eq('id', 1)
     alert('修正しました')
     router.refresh()
@@ -312,7 +336,6 @@ export default function AdminClient({
   return (
     <div className="space-y-6">
       
-      {/* ★登録待機モーダル */}
       {registeringUser && (
         <div className="fixed inset-0 bg-black/80 z-[9999] flex flex-col items-center justify-center text-white animate-fade-in">
             <div className="text-6xl mb-4 animate-bounce">📡</div>
@@ -327,20 +350,18 @@ export default function AdminClient({
         </div>
       )}
 
-      {/* タブ切り替え */}
       <div className="flex border-b border-gray-300 bg-white sticky top-0 z-20">
         <button onClick={() => setActiveTab('manage')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'manage' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>⚙️ 在庫・商品・メンバー</button>
         <button onClick={() => setActiveTab('report')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'report' ? 'border-b-4 border-indigo-600 text-indigo-600' : 'text-gray-600 hover:text-gray-900'}`}>📊 売上・履歴・ログ</button>
       </div>
 
-      {/* === 管理タブ === */}
       {activeTab === 'manage' && (
         <div className="space-y-10 animate-fade-in">
             <section className="bg-white p-6 rounded-xl shadow-sm border border-yellow-300">
                 <h2 className="text-lg font-bold text-gray-900 mb-4">💰 金庫（現金箱）</h2>
                 <div className="flex items-center gap-4">
                     <input type="number" value={fund} onChange={(e) => setFund(Number(e.target.value))} onFocus={(e) => e.target.select()} className="text-3xl font-bold p-2 border border-gray-300 rounded w-40 text-right bg-white text-gray-900 shadow-inner" />
-                    <span className="text-xl font-bold text-gray-900"> $SHM</span>
+                    <span className="text-xl font-bold text-gray-900">$OSH</span>
                     <button onClick={updateFundManually} disabled={loading} className="bg-yellow-500 text-white px-4 py-2 rounded font-bold hover:bg-yellow-600 shadow-md">棚卸し修正</button>
                 </div>
             </section>
@@ -363,7 +384,7 @@ export default function AdminClient({
                     <div className="flex items-center gap-2">
                         <span className="font-bold text-sm text-gray-800">一括チャージ額:</span>
                         <input type="number" value={chargeAmount} onChange={(e) => setChargeAmount(Number(e.target.value))} onFocus={(e) => e.target.select()} className={`font-bold p-1 border border-gray-300 rounded w-24 text-right ${chargeAmount < 0 ? 'bg-red-50 text-red-600' : 'bg-white text-gray-900'}`} />
-                        <span className="font-bold text-sm text-gray-800"> $SHM</span>
+                        <span className="font-bold text-sm text-gray-800">$OSH</span>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer"><input type="checkbox" checked={showAllUsers} onChange={e => setShowAllUsers(e.target.checked)} /> 卒業生も含めて表示</label>
                 </div>
@@ -376,10 +397,9 @@ export default function AdminClient({
                             {displayedUsers.map(u => (
                                 <tr key={u.id} className={`hover:bg-gray-50 ${u.is_active === false ? 'bg-gray-100 opacity-60' : ''}`}>
                                     <td className="p-3 font-bold text-gray-900">{u.name} <span className="text-xs font-normal text-gray-500">({u.grade})</span>{u.ic_card_uid && <span className="ml-1 text-xs text-green-600">✅</span>}</td>
-                                    <td className="p-3 font-bold text-blue-700 text-lg">{u.currentBalance.toLocaleString()}</td>
+                                    <td className="p-3 font-bold text-blue-700 text-lg">{u.currentBalance.toLocaleString()} $OSH</td>
                                     <td className="p-3 flex gap-2 items-center">
                                         <button onClick={() => handleCharge(u)} disabled={loading || u.is_active === false} className={`text-white px-3 py-1 rounded text-xs font-bold shadow disabled:bg-gray-400 ${chargeAmount < 0 ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'}`}>{chargeAmount < 0 ? '返金' : 'チャージ'}</button>
-                                        {/* ★修正: onClickで状態を変えるだけにする */}
                                         <button onClick={() => handleRegisterCardButton(u)} disabled={loading} className="bg-gray-700 text-white px-3 py-1 rounded text-xs font-bold hover:bg-gray-800 shadow">🆔</button>
                                         <button onClick={() => toggleUserStatus(u)} disabled={loading} className={`ml-2 text-xs underline ${u.is_active === false ? 'text-blue-600' : 'text-red-400 hover:text-red-600'}`}>{u.is_active === false ? '復帰' : '卒業'}</button>
                                     </td>
@@ -392,10 +412,6 @@ export default function AdminClient({
 
             <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-300">
                 <h2 className="text-lg font-bold text-gray-900 mb-4">📦 商品管理</h2>
-                {/* ... (商品管理セクションは変更なし) ... */}
-                {/* 変更がないため省略しますが、前のコードのままでOKです。 */}
-                {/* ※実際にはここにも商品管理のコード（商品追加、リスト表示）が必要です。 */}
-                {/* スペースの都合で省略しますが、前のコードをそのまま維持してください */}
                 <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                     <h3 className="text-sm font-bold text-gray-700 mb-3">✨ 新しい商品を追加</h3>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
@@ -419,7 +435,7 @@ export default function AdminClient({
                                 <tr key={p.id} className={`hover:bg-gray-50 ${!p.is_active ? 'bg-gray-100 opacity-60' : ''}`}>
                                     <td className="p-3 font-bold text-gray-900">{p.name}</td>
                                     <td className="p-3 text-gray-700"><span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded text-gray-600">{p.category}</span></td>
-                                    <td className="p-3"><div className="flex items-center"><input type="number" value={p.price} onChange={(e) => handleProductChange(p.id, 'price', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-20 p-1 border border-gray-300 rounded font-bold text-gray-900 text-right" /><span className="text-gray-500 mr-1"> $SHM</span></div></td>
+                                    <td className="p-3"><div className="flex items-center"><span className="text-gray-500 mr-1">$</span><input type="number" value={p.price} onChange={(e) => handleProductChange(p.id, 'price', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-20 p-1 border border-gray-300 rounded font-bold text-gray-900 text-right" /></div></td>
                                     <td className="p-3 flex items-center gap-1">
                                         <button onClick={() => handleProductChange(p.id, 'stock', p.stock - 1)} className="bg-red-100 text-red-700 border border-red-200 w-7 h-7 rounded font-bold hover:bg-red-200">-</button>
                                         <input type="number" value={p.stock} onChange={(e) => handleProductChange(p.id, 'stock', Number(e.target.value))} onFocus={(e) => e.target.select()} className="w-14 text-center border border-gray-300 rounded p-1 font-bold text-gray-900 bg-white" />
@@ -436,10 +452,9 @@ export default function AdminClient({
         </div>
       )}
 
-      {/* === レポートタブ (内容は既存のまま) === */}
       {activeTab === 'report' && (
         <div className="space-y-8 animate-fade-in">
-            {/* ...レポートタブの内容（変更なし）... */}
+            {/* レポートタブは変更なし（元のコードを保持） */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-300 flex items-center justify-between">
                 <div><h3 className="text-lg font-bold text-gray-800">🗓 月次締め・リセット</h3><p className="text-sm text-gray-500">現在の取引履歴をCSV保存し、画面をリセットします。</p></div>
                 <button onClick={handleResetHistory} disabled={loading || initialHistory.length === 0} className="bg-red-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-red-700 disabled:bg-gray-400">CSV出力してリセット</button>
@@ -457,7 +472,7 @@ export default function AdminClient({
                     <h3 className="text-md font-bold text-green-900 mb-4">👑 ヘビーユーザー</h3>
                     <ul className="space-y-3">
                         {stats.userRanking.map(([name, amount], i) => (
-                            <li key={name} className="flex items-center justify-between border-b border-green-50 pb-2"><span className="font-bold text-gray-800"><span className="text-green-600 mr-2 font-extrabold">#{i+1}</span> {name}</span><span className="font-bold text-gray-900">{amount.toLocaleString()} $SHM</span></li>
+                            <li key={name} className="flex items-center justify-between border-b border-green-50 pb-2"><span className="font-bold text-gray-800"><span className="text-green-600 mr-2 font-extrabold">#{i+1}</span> {name}</span><span className="font-bold text-gray-900">{amount.toLocaleString()} $OSH</span></li>
                         ))}
                     </ul>
                 </section>
@@ -469,7 +484,7 @@ export default function AdminClient({
                         <thead className="bg-blue-50 text-gray-700 sticky top-0"><tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">ユーザー</th><th className="p-3 border-b">チャージ額</th></tr></thead>
                         <tbody className="divide-y divide-gray-100">
                             {initialChargeLogs.map((log) => (
-                                <tr key={log.id} className="hover:bg-blue-50/30"><td className="p-3 text-gray-500 text-xs">{new Date(log.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-800">{log.user_name}</td><td className="p-3 font-bold text-blue-600">{log.amount.toLocaleString()}</td></tr>
+                                <tr key={log.id} className="hover:bg-blue-50/30"><td className="p-3 text-gray-500 text-xs">{new Date(log.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-800">{log.user_name}</td><td className="p-3 font-bold text-blue-600">{log.amount > 0 ? '+' : ''}{log.amount.toLocaleString()} $OSH</td></tr>
                             ))}
                         </tbody>
                     </table>
@@ -495,7 +510,7 @@ export default function AdminClient({
                         <thead className="bg-gray-100 text-gray-700 sticky top-0"><tr><th className="p-3 border-b">日時</th><th className="p-3 border-b">購入者</th><th className="p-3 border-b">商品</th><th className="p-3 border-b">個数</th><th className="p-3 border-b">金額</th></tr></thead>
                         <tbody className="divide-y divide-gray-200">
                             {initialHistory.map((t) => (
-                                <tr key={t.id} className="hover:bg-gray-50"><td className="p-3 text-gray-600 text-xs">{new Date(t.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-900">{t.user_name}</td><td className="p-3 text-gray-800">{t.product_name}</td><td className="p-3 text-gray-800">x{t.quantity}</td><td className="p-3 font-bold text-gray-900">{t.total_amount} $SHM</td></tr>
+                                <tr key={t.id} className="hover:bg-gray-50"><td className="p-3 text-gray-600 text-xs">{new Date(t.created_at).toLocaleString('ja-JP')}</td><td className="p-3 font-bold text-gray-900">{t.user_name}</td><td className="p-3 text-gray-800">{t.product_name}</td><td className="p-3 text-gray-800">x{t.quantity}</td><td className="p-3 font-bold text-gray-900">{t.total_amount} $OSH</td></tr>
                             ))}
                         </tbody>
                     </table>
