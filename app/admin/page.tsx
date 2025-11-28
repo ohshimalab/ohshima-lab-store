@@ -22,12 +22,12 @@ async function getData() {
         .select('current_balance')
         .single()
 
-    // 4. 取引履歴 (★変更: is_archivedがfalseのものだけ取得)
+    // 4. 取引履歴 (購入ログ)
     const { data: history } = await supabase
         .from('transaction_details')
         .select('*')
-        .eq('is_archived', false) // ★ここ重要
-        .limit(200) // CSV出力用に少し多めに取得
+        .eq('is_archived', false)
+        .limit(200)
         .order('created_at', { ascending: false })
 
     // 5. 商品操作ログ
@@ -44,7 +44,14 @@ async function getData() {
         .limit(50)
         .order('created_at', { ascending: false })
 
-    // 整形処理
+    // 7. ★追加: 買い出し履歴 (expenses)
+    const { data: expenseLogs } = await supabase
+        .from('expenses')
+        .select('*')
+        .limit(50)
+        .order('created_at', { ascending: false })
+
+    // ユーザーデータの整形
     const usersData = usersWithBalance?.map((u: any) => {
         let currentBalance = 0;
         if (Array.isArray(u.balance)) {
@@ -62,6 +69,7 @@ async function getData() {
         };
     }) || []
     
+    // チャージログの整形
     const formattedChargeLogs = chargeLogs?.map((log: any) => ({
         id: log.id,
         created_at: log.created_at,
@@ -76,12 +84,13 @@ async function getData() {
         currentFund: fundData?.current_balance || 0,
         history: history || [],
         productLogs: productLogs || [],
-        chargeLogs: formattedChargeLogs
+        chargeLogs: formattedChargeLogs,
+        expenseLogs: expenseLogs || [] // ★追加
     }
 }
 
 export default async function AdminPage() {
-    const { usersData, products, currentFund, history, productLogs, chargeLogs } = await getData()
+    const { usersData, products, currentFund, history, productLogs, chargeLogs, expenseLogs } = await getData()
 
     return (
         <main className="min-h-screen bg-gray-100 p-6 pb-20">
@@ -96,6 +105,7 @@ export default async function AdminPage() {
                     initialHistory={history}
                     initialProductLogs={productLogs}
                     initialChargeLogs={chargeLogs}
+                    initialExpenseLogs={expenseLogs} // ★追加
                 />
             </div>
         </main>
