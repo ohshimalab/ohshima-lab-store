@@ -24,3 +24,20 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* スクリーンセーバー: タッチ案内のパルスアニメーション */
+.screensaver-pulse {
+  animation: screensaverPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes screensaverPulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}

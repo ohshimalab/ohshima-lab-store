@@ -1,9 +1,10 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { createClient, type RealtimeChannel } from '@supabase/supabase-js'
 import { verifyKioskPassword } from './actions'
+import Screensaver from './Screensaver'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,54 +38,96 @@ export default function HomeClient({ users, history, products }: { users: User[]
   const [scannedUser, setScannedUser] = useState<User | null>(null)
   const [isKioskMode, setIsKioskMode] = useState(false)
   const [isScreensaverActive, setIsScreensaverActive] = useState(false)
-  
-  // スクリーンセーバー用
-  const [saverPos, setSaverPos] = useState({ top: '50%', left: '50%' })
-  const [timeStr, setTimeStr] = useState('')
 
   useEffect(() => {
     const savedMode = localStorage.getItem('kiosk_mode')
     if (savedMode === 'true') setIsKioskMode(true)
   }, [])
 
+  // --- Realtime チャンネル管理（再接続対応） ---
+  const channelRef = useRef<RealtimeChannel | null>(null)
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const setupChannel = useCallback(() => {
+    // 既存チャンネルがあれば破棄
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current)
+      channelRef.current = null
+    }
+
+    console.log("📡 [Kiosk] チャンネル接続を開始...")
+    const channel = supabase
+      .channel('kiosk_entry_' + Date.now()) // ユニークな名前で再作成
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'kiosk_status', filter: 'id=eq.1' },
+        (payload) => {
+          const newUid = payload.new.current_uid
+          if (newUid) {
+            const matchedUser = users.find(u => u.ic_card_uid === newUid)
+            if (matchedUser) {
+              setScannedUser(matchedUser)
+              router.push(`/shop/${matchedUser.id}`)
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log("✅ [Kiosk] Realtime 接続OK")
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn("⚠️ [Kiosk] Realtime 接続エラー。3秒後に再接続...")
+          reconnectTimerRef.current = setTimeout(() => setupChannel(), 3000)
+        }
+      })
+
+    channelRef.current = channel
+  }, [users, router])
+
+  // Realtime 接続の開始と visibilitychange での復帰
+  useEffect(() => {
+    if (!isKioskMode) return
+
+    setupChannel()
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log("👁️ [Kiosk] 画面復帰を検知。チャンネル再接続...")
+        setupChannel()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current)
+        channelRef.current = null
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [isKioskMode, setupChannel])
+
   // --- スクリーンセーバー制御 ---
   useEffect(() => {
     if (!isKioskMode) return
 
     let timeoutId: NodeJS.Timeout
-    let intervalId: NodeJS.Timeout
-    let clockId: NodeJS.Timeout
 
     const startTimer = () => {
         clearTimeout(timeoutId)
         timeoutId = setTimeout(() => {
             setIsScreensaverActive(true)
-            moveSaver()
-        }, 180000) // 3分
-    }
-
-    const moveSaver = () => {
-        // 画面中央付近でランダムに動くように調整（巨大背景の中での相対位置）
-        const top = Math.floor(Math.random() * 40) + 30 + '%' 
-        const left = Math.floor(Math.random() * 40) + 30 + '%'
-        setSaverPos({ top, left })
-    }
-
-    const updateClock = () => {
-        const now = new Date()
-        setTimeStr(now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }))
+        }, 1800) // 3分
     }
 
     startTimer()
-    
-    if (isScreensaverActive) {
-        intervalId = setInterval(moveSaver, 10000)
-        clockId = setInterval(updateClock, 1000)
-        updateClock()
-    }
 
+    // スクリーンセーバー表示中でないときだけ操作を検知してタイマーリセット
     const handleActivity = () => {
-        if (isScreensaverActive) setIsScreensaverActive(false)
+        if (isScreensaverActive) return // スクリーンセーバー中は Screensaver コンポーネント側で処理
         startTimer()
     }
 
@@ -94,8 +137,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
 
     return () => {
         clearTimeout(timeoutId)
-        clearInterval(intervalId)
-        clearInterval(clockId)
         window.removeEventListener('mousemove', handleActivity)
         window.removeEventListener('touchstart', handleActivity)
         window.removeEventListener('click', handleActivity)
@@ -142,67 +183,15 @@ export default function HomeClient({ users, history, products }: { users: User[]
     return grouped
   }, [products])
 
-  useEffect(() => {
-    if (!isKioskMode) return
-    console.log("📡 [Kiosk Active] Listening for card scans...")
-    const channel = supabase
-      .channel('kiosk_entry')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'kiosk_status', filter: 'id=eq.1' },
-        (payload) => {
-          const newUid = payload.new.current_uid
-          
-          // カードが置かれた時だけ反応
-          if (newUid) {
-            const matchedUser = users.find(u => u.ic_card_uid === newUid)
-            if (matchedUser) {
-                setScannedUser(matchedUser)
-                // 即座に遷移
-                router.push(`/shop/${matchedUser.id}`)
-            }
-          }
-        }
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [users, router, isKioskMode])
-
   return (
     <div className="max-w-md mx-auto relative space-y-8 pb-20">
       
-      {/* ★修正版スクリーンセーバー: 画面の2倍サイズで覆う */}
+      {/* ★スクリーンセーバー: Three.js 3Dアニメーション + タッチ案内 */}
       {isScreensaverActive && isKioskMode && (
-        <div 
-            className="fixed top-[-50%] left-[-50%] w-[200vw] h-[200vh] bg-black z-[10000] cursor-none overflow-hidden touch-none flex items-center justify-center"
-            onClick={() => setIsScreensaverActive(false)}
-        >
-            {/* コンテンツコンテナ（画面中央に配置するための枠） */}
-            <div className="relative w-[50vw] h-[50vh]">
-                
-                {/* 背景の幾何学模様 */}
-                <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-900 opacity-30 animate-[spin_10s_linear_infinite]"></div>
-                <div className="absolute top-1/4 left-1/4 w-64 h-64 border border-cyan-800 opacity-20 animate-[spin_15s_linear_infinite_reverse] rotate-45"></div>
-                <div className="absolute bottom-1/4 right-1/4 w-80 h-80 border border-blue-900 rounded-full opacity-20 animate-pulse"></div>
-                
-                {/* 移動する文字 */}
-                <div 
-                    className="absolute flex flex-col items-center transition-all duration-[2000ms] ease-in-out"
-                    style={{ top: saverPos.top, left: saverPos.left, transform: 'translate(-50%, -50%)' }}
-                >
-                    <div className="text-6xl font-mono font-bold text-gray-800 tracking-widest opacity-50 select-none">
-                        {timeStr}
-                    </div>
-                    <div className="mt-2 text-xl font-bold text-blue-900 tracking-[0.5em] opacity-60 select-none whitespace-nowrap">
-                        OHSHM LAB STORE
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                        <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping"></div>
-                        <div className="w-2 h-2 bg-cyan-600 rounded-full animate-ping delay-100"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <Screensaver onDismiss={() => {
+          setIsScreensaverActive(false)
+          setupChannel() // 解除時にRealtime接続を再確立
+        }} />
       )}
 
       <div className="absolute top-0 right-0">
