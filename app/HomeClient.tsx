@@ -120,7 +120,7 @@ export default function HomeClient({ users, history, products, rankings }: { use
         clearTimeout(timeoutId)
         timeoutId = setTimeout(() => {
             setIsScreensaverActive(true)
-        }, 1800) // 3分
+        }, 60000) // 1分
     }
 
     startTimer()
@@ -211,20 +211,20 @@ export default function HomeClient({ users, history, products, rankings }: { use
       <div className="grid grid-cols-1 gap-4">
             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 shadow-sm">
                 <h3 className="text-xs font-bold text-yellow-800 text-center mb-3 uppercase tracking-wider">👑 Top Spenders（累計購入額）</h3>
-                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-3 custom-scrollbar">
+                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                     {rankings.topUsers.map(([name, amount], index) => {
                         const maxAmount = rankings.topUsers[0]?.[1] || 1
                         const barWidth = (amount / maxAmount) * 100
                         return (
-                            <div key={name} className="flex items-center gap-2 text-sm">
+                            <div key={name} className="flex items-center gap-1.5 text-sm min-w-0">
                                 <span className="w-5 text-right font-bold text-yellow-700 text-xs shrink-0">
                                     {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}`}
                                 </span>
-                                <span className="font-bold text-gray-700 text-xs truncate w-16 shrink-0">{name}</span>
-                                <div className="flex-1 h-5 bg-yellow-100 rounded-full overflow-hidden">
+                                <span className="font-bold text-gray-700 text-xs truncate min-w-[3rem] max-w-[4rem] shrink-0">{name}</span>
+                                <div className="flex-1 h-5 bg-yellow-100 rounded-full overflow-hidden min-w-0">
                                     <div className="h-full bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
                                 </div>
-                                <span className="font-bold text-gray-900 text-xs shrink-0 w-20 text-right">{amount.toLocaleString()} $SHM</span>
+                                <span className="font-bold text-gray-900 text-xs shrink-0 min-w-[4.5rem] text-right whitespace-nowrap">{amount.toLocaleString()} $SHM</span>
                             </div>
                         )
                     })}
@@ -232,18 +232,18 @@ export default function HomeClient({ users, history, products, rankings }: { use
             </div>
             <div className="bg-red-50 p-4 rounded-xl border border-red-200 shadow-sm">
                 <h3 className="text-xs font-bold text-red-800 text-center mb-3 uppercase tracking-wider">🔥 Trending Items（累計販売数）</h3>
-                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-3 custom-scrollbar">
+                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                     {rankings.topProducts.map(([name, count], index) => {
                         const maxCount = rankings.topProducts[0]?.[1] || 1
                         const barWidth = (count / maxCount) * 100
                         return (
-                            <div key={name} className="flex items-center gap-2 text-sm">
+                            <div key={name} className="flex items-center gap-1.5 text-sm min-w-0">
                                 <span className="w-5 text-right font-bold text-red-600 text-xs shrink-0">{index + 1}.</span>
-                                <span className="font-medium text-gray-700 text-xs truncate w-20 shrink-0">{name}</span>
-                                <div className="flex-1 h-5 bg-red-100 rounded-full overflow-hidden">
+                                <span className="font-medium text-gray-700 text-xs truncate min-w-[3rem] max-w-[5rem] shrink-0">{name}</span>
+                                <div className="flex-1 h-5 bg-red-100 rounded-full overflow-hidden min-w-0">
                                     <div className="h-full bg-gradient-to-r from-red-400 to-rose-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
                                 </div>
-                                <span className="font-bold text-gray-600 text-xs shrink-0 w-10 text-right">x{count}</span>
+                                <span className="font-bold text-gray-600 text-xs shrink-0 min-w-[2.5rem] text-right whitespace-nowrap">x{count}</span>
                             </div>
                         )
                     })}
