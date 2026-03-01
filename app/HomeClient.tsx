@@ -211,7 +211,7 @@ export default function HomeClient({ users, history, products, rankings }: { use
       <div className="grid grid-cols-1 gap-4">
             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 shadow-sm">
                 <h3 className="text-xs font-bold text-yellow-800 text-center mb-3 uppercase tracking-wider">👑 Top Spenders（累計購入額）</h3>
-                <div className="max-h-[280px] overflow-y-auto space-y-2">
+                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-3 custom-scrollbar">
                     {rankings.topUsers.map(([name, amount], index) => {
                         const maxAmount = rankings.topUsers[0]?.[1] || 1
                         const barWidth = (amount / maxAmount) * 100
@@ -232,7 +232,7 @@ export default function HomeClient({ users, history, products, rankings }: { use
             </div>
             <div className="bg-red-50 p-4 rounded-xl border border-red-200 shadow-sm">
                 <h3 className="text-xs font-bold text-red-800 text-center mb-3 uppercase tracking-wider">🔥 Trending Items（累計販売数）</h3>
-                <div className="max-h-[280px] overflow-y-auto space-y-2">
+                <div className="max-h-[280px] overflow-y-auto space-y-2 pr-3 custom-scrollbar">
                     {rankings.topProducts.map(([name, count], index) => {
                         const maxCount = rankings.topProducts[0]?.[1] || 1
                         const barWidth = (count / maxCount) * 100
@@ -275,7 +275,7 @@ export default function HomeClient({ users, history, products, rankings }: { use
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
             <h3 className="text-sm font-bold text-gray-600 mb-3">🕒 最近の購入履歴</h3>
-            <div className="space-y-3 max-h-[600px] overflow-y-auto">
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                 {history.slice(0, 50).map((t) => (
                     <div key={t.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
                         <div className="flex items-center gap-2">
