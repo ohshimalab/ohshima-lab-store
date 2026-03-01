@@ -220,11 +220,11 @@ export default function HomeClient({ users, history, products, rankings }: { use
                                 <span className="w-5 text-right font-bold text-yellow-700 text-xs shrink-0">
                                     {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}`}
                                 </span>
-                                <span className="font-bold text-gray-700 text-xs truncate min-w-[3rem] max-w-[4rem] shrink-0">{name}</span>
+                                <span className="font-bold text-gray-700 text-xs truncate w-[4rem] shrink-0">{name}</span>
                                 <div className="flex-1 h-5 bg-yellow-100 rounded-full overflow-hidden min-w-0">
                                     <div className="h-full bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
                                 </div>
-                                <span className="font-bold text-gray-900 text-xs shrink-0 min-w-[4.5rem] text-right whitespace-nowrap">{amount.toLocaleString()} $SHM</span>
+                                <span className="font-bold text-gray-900 text-xs shrink-0 w-[4.5rem] text-right whitespace-nowrap">{amount.toLocaleString()} $SHM</span>
                             </div>
                         )
                     })}
@@ -239,11 +239,11 @@ export default function HomeClient({ users, history, products, rankings }: { use
                         return (
                             <div key={name} className="flex items-center gap-1.5 text-sm min-w-0">
                                 <span className="w-5 text-right font-bold text-red-600 text-xs shrink-0">{index + 1}.</span>
-                                <span className="font-medium text-gray-700 text-xs truncate min-w-[3rem] max-w-[5rem] shrink-0">{name}</span>
+                                <span className="font-medium text-gray-700 text-xs truncate w-[5rem] shrink-0">{name}</span>
                                 <div className="flex-1 h-5 bg-red-100 rounded-full overflow-hidden min-w-0">
                                     <div className="h-full bg-gradient-to-r from-red-400 to-rose-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
                                 </div>
-                                <span className="font-bold text-gray-600 text-xs shrink-0 min-w-[2.5rem] text-right whitespace-nowrap">x{count}</span>
+                                <span className="font-bold text-gray-600 text-xs shrink-0 w-[2.5rem] text-right whitespace-nowrap">x{count}</span>
                             </div>
                         )
                     })}
