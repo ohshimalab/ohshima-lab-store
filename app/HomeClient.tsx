@@ -120,7 +120,7 @@ export default function HomeClient({ users, history, products, rankings }: { use
         clearTimeout(timeoutId)
         timeoutId = setTimeout(() => {
             setIsScreensaverActive(true)
-        }, 180000) // 3分
+        }, 1800) // 3分
     }
 
     startTimer()
