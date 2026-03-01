@@ -33,7 +33,7 @@ type Product = {
     category: string
 }
 
-export default function HomeClient({ users, history, products }: { users: User[], history: Transaction[], products: Product[] }) {
+export default function HomeClient({ users, history, products, rankings }: { users: User[], history: Transaction[], products: Product[], rankings: { topUsers: [string, number][], topProducts: [string, number][] } }) {
   const router = useRouter()
   const [scannedUser, setScannedUser] = useState<User | null>(null)
   const [isKioskMode, setIsKioskMode] = useState(false)
@@ -120,7 +120,7 @@ export default function HomeClient({ users, history, products }: { users: User[]
         clearTimeout(timeoutId)
         timeoutId = setTimeout(() => {
             setIsScreensaverActive(true)
-        }, 1800) // 3分
+        }, 180000) // 3分
     }
 
     startTimer()
@@ -156,23 +156,6 @@ export default function HomeClient({ users, history, products }: { users: User[]
         alert("パスワードが違います")
     }
   }
-
-  const rankings = useMemo(() => {
-    const userSpending: Record<string, number> = {}
-    history.forEach(t => {
-        const name = t.user_name || '不明'
-        userSpending[name] = (userSpending[name] || 0) + (t.total_amount || 0)
-    })
-    const topUsers = Object.entries(userSpending).sort(([, a], [, b]) => b - a).slice(0, 3)
-
-    const productCount: Record<string, number> = {}
-    history.forEach(t => {
-        const name = t.product_name || '不明'
-        productCount[name] = (productCount[name] || 0) + (t.quantity || 0)
-    })
-    const topProducts = Object.entries(productCount).sort(([, a], [, b]) => b - a).slice(0, 3)
-    return { topUsers, topProducts }
-  }, [history])
 
   const menuByCategory = useMemo(() => {
     const grouped: Record<string, Product[]> = {}
@@ -225,34 +208,46 @@ export default function HomeClient({ users, history, products }: { users: User[]
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4">
             <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 shadow-sm">
-                <h3 className="text-xs font-bold text-yellow-800 text-center mb-3 uppercase tracking-wider">Top Spenders</h3>
-                <ul className="space-y-2">
-                    {rankings.topUsers.map(([name, amount], index) => (
-                        <li key={name} className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                                <span className={`font-bold ${index === 0 ? 'text-2xl' : index === 1 ? 'text-xl' : 'text-lg'}`}>{index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}</span>
-                                <span className="font-bold text-gray-700 text-xs truncate max-w-[80px]">{name}</span>
+                <h3 className="text-xs font-bold text-yellow-800 text-center mb-3 uppercase tracking-wider">👑 Top Spenders（累計購入額）</h3>
+                <div className="max-h-[280px] overflow-y-auto space-y-2">
+                    {rankings.topUsers.map(([name, amount], index) => {
+                        const maxAmount = rankings.topUsers[0]?.[1] || 1
+                        const barWidth = (amount / maxAmount) * 100
+                        return (
+                            <div key={name} className="flex items-center gap-2 text-sm">
+                                <span className="w-5 text-right font-bold text-yellow-700 text-xs shrink-0">
+                                    {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}`}
+                                </span>
+                                <span className="font-bold text-gray-700 text-xs truncate w-16 shrink-0">{name}</span>
+                                <div className="flex-1 h-5 bg-yellow-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
+                                </div>
+                                <span className="font-bold text-gray-900 text-xs shrink-0 w-20 text-right">{amount.toLocaleString()} $SHM</span>
                             </div>
-                            <span className="font-bold text-gray-900">{amount.toLocaleString()} $SHM</span>
-                        </li>
-                    ))}
-                </ul>
+                        )
+                    })}
+                </div>
             </div>
             <div className="bg-red-50 p-4 rounded-xl border border-red-200 shadow-sm">
-                <h3 className="text-xs font-bold text-red-800 text-center mb-3 uppercase tracking-wider">Trending Items</h3>
-                <ul className="space-y-2">
-                    {rankings.topProducts.map(([name, count], index) => (
-                        <li key={name} className="flex items-center justify-between text-sm">
-                             <div className="flex items-center gap-2">
-                                <span className={`font-bold ${index === 0 ? 'text-red-600' : 'text-red-400'}`}>{index + 1}.</span>
-                                <span className="font-medium text-gray-700 text-xs truncate max-w-[90px]">{name}</span>
+                <h3 className="text-xs font-bold text-red-800 text-center mb-3 uppercase tracking-wider">🔥 Trending Items（累計販売数）</h3>
+                <div className="max-h-[280px] overflow-y-auto space-y-2">
+                    {rankings.topProducts.map(([name, count], index) => {
+                        const maxCount = rankings.topProducts[0]?.[1] || 1
+                        const barWidth = (count / maxCount) * 100
+                        return (
+                            <div key={name} className="flex items-center gap-2 text-sm">
+                                <span className="w-5 text-right font-bold text-red-600 text-xs shrink-0">{index + 1}.</span>
+                                <span className="font-medium text-gray-700 text-xs truncate w-20 shrink-0">{name}</span>
+                                <div className="flex-1 h-5 bg-red-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-gradient-to-r from-red-400 to-rose-500 rounded-full transition-all duration-500" style={{ width: `${barWidth}%` }} />
+                                </div>
+                                <span className="font-bold text-gray-600 text-xs shrink-0 w-10 text-right">x{count}</span>
                             </div>
-                            <span className="font-bold text-gray-500 text-xs">x{count}</span>
-                        </li>
-                    ))}
-                </ul>
+                        )
+                    })}
+                </div>
             </div>
       </div>
 
@@ -280,8 +275,8 @@ export default function HomeClient({ users, history, products }: { users: User[]
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
             <h3 className="text-sm font-bold text-gray-600 mb-3">🕒 最近の購入履歴</h3>
-            <div className="space-y-3">
-                {history.slice(0, 5).map((t) => (
+            <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                {history.slice(0, 50).map((t) => (
                     <div key={t.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
                         <div className="flex items-center gap-2">
                             <div className="bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center text-xs font-bold text-gray-500">{t.user_name.slice(0, 1)}</div>

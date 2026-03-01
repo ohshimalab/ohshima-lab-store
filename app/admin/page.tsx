@@ -22,12 +22,11 @@ async function getData() {
         .select('current_balance')
         .single()
 
-    // 4. 取引履歴 (購入ログ)
+    // 4. 取引履歴 (購入ログ) — 全件取得（レポート集計・CSV出力に必要）
     const { data: history } = await supabase
         .from('transaction_details')
         .select('*')
         .eq('is_archived', false)
-        .limit(200)
         .order('created_at', { ascending: false })
 
     // 5. 商品操作ログ
